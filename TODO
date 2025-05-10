@@ -1,0 +1,9 @@
+- Run:
+    - ptrace children
+        - check https://pkg.go.dev/github.com/u-root/u-root/pkg/strace#Strace
+    - on failure, kill process / wait for it
+    - subreaper
+    - add c.path & c.dir to returned list of files
+- main
+    - exclude files on some filesystems (eg: proc, sys)
+    - after Run, stat all files and fetch thte newest time (mod / status change)
