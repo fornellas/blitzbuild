@@ -38,6 +38,9 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_CLONE3:            true,
 	unix.SYS_CLONE:             true,
 	unix.SYS_CLOSE:             true,
+	unix.SYS_DUP2:              true,
+	unix.SYS_DUP3:              true,
+	unix.SYS_DUP:               true,
 	unix.SYS_EXIT_GROUP:        true,
 	unix.SYS_FCNTL:             true,
 	unix.SYS_FSTAT:             true,
@@ -338,7 +341,14 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 				if err != nil {
 					return nil, err
 				}
-				fileMap[file] = true
+				if len(file) == 0 {
+					// TODO understand why execve, first time it is called, comes with all zeroed arguments
+					if syscallParms.syscall != unix.SYS_EXECVE {
+						panic(fmt.Errorf("bug: empty path: %#v", syscallParms))
+					}
+				} else {
+					fileMap[file] = true
+				}
 			} else {
 				syscallName, ok := syscallToNameMap[syscallParms.syscall]
 				if !ok {
