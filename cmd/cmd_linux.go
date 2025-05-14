@@ -7,10 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -41,6 +41,7 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_DUP2:              true,
 	unix.SYS_DUP3:              true,
 	unix.SYS_DUP:               true,
+	unix.SYS_FUTEX:             true,
 	unix.SYS_EXIT_GROUP:        true,
 	unix.SYS_FCNTL:             true,
 	unix.SYS_FSTAT:             true,
@@ -77,10 +78,10 @@ var ignoreSyscallsMap = map[uint64]bool{
 }
 
 func getSyscallArgPath(pid int, arg uint64) (string, error) {
-	var path [syscall.PathMax]byte
-	for i := range syscall.PathMax {
+	var path [unix.PathMax]byte
+	for i := range unix.PathMax {
 		buff := [1]byte{}
-		count, err := syscall.PtracePeekText(pid, uintptr(arg+uint64(i)), buff[:])
+		count, err := unix.PtracePeekText(pid, uintptr(arg+uint64(i)), buff[:])
 		if err != nil {
 			return "", err
 		}
@@ -106,10 +107,6 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) (string, error){
 		return pathName, nil
 	},
 	unix.SYS_EXECVE: func(pid int, scMap *syscallParms) (string, error) {
-		// TODO understand why execve, first time it is called, comes with all zeroed arguments
-		if scMap.arg1 == 0 {
-			return "", nil
-		}
 		pathName, err := getSyscallArgPath(pid, scMap.arg1)
 		if err != nil {
 			return "", err
@@ -173,7 +170,7 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) (string, error){
 
 // ExitError reports an unsuccessful exit by a command.
 type ExitError struct {
-	*syscall.WaitStatus
+	*unix.WaitStatus
 }
 
 func (e *ExitError) Error() string {
@@ -187,7 +184,7 @@ func (e *ExitError) Error() string {
 		res = "signal: " + e.WaitStatus.Signal().String()
 	case e.WaitStatus.Stopped():
 		res = "stop signal: " + e.WaitStatus.StopSignal().String()
-		if e.WaitStatus.StopSignal() == syscall.SIGTRAP && e.WaitStatus.TrapCause() != 0 {
+		if e.WaitStatus.StopSignal() == unix.SIGTRAP && e.WaitStatus.TrapCause() != 0 {
 			res += " (trap " + strconv.Itoa(e.WaitStatus.TrapCause()) + ")"
 		}
 	case e.WaitStatus.Continued():
@@ -275,6 +272,19 @@ func NewCmdPtraceFile(
 	}, nil
 }
 
+func ptraceSetOptions(pid int) error {
+	return unix.PtraceSetOptions(
+		pid,
+		unix.PTRACE_O_TRACEEXEC|
+			// unix.PTRACE_O_TRACESECCOMP|
+			unix.PTRACE_O_TRACESYSGOOD|
+			unix.PTRACE_O_EXITKILL|
+			unix.PTRACE_O_TRACECLONE|
+			unix.PTRACE_O_TRACEFORK|
+			unix.PTRACE_O_TRACEVFORK,
+	)
+}
+
 // Run executes the command and traces files it interacted with using ptrace(2). On success, it
 // returns a map of such files. On unsuccessful exit, it returns ExitError; it may also return other
 // related errors.
@@ -287,38 +297,103 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{
+	cmd.SysProcAttr = &unix.SysProcAttr{
 		Ptrace: true,
 	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	pid := cmd.Process.Pid
+	fmt.Printf("pid: %d\n", pid)
+
+	// https://github.com/u-root/u-root/blob/eadd8c6fee2e915e8f331b1c532be4ac98ba2a05/pkg/strace/tracer.go#L185
+	var waitStatus unix.WaitStatus
+	_, err := unix.Wait4(pid, &waitStatus, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ptraceSetOptions(pid); err != nil {
+		return nil, err
+	}
+
+	if err := unix.PtraceSyscall(pid, 0); err != nil {
+		return nil, err
+	}
 
 	fileMap := map[string]bool{}
 	for {
-		var waitStatus syscall.WaitStatus
-		var rusage syscall.Rusage
-		wpid, err := syscall.Wait4(pid, &waitStatus, 0, &rusage)
+		fmt.Printf("loop\n")
+		wpid, err := unix.Wait4(-1, &waitStatus, 0, nil)
 		if err != nil {
 			return nil, err
+		}
+		if wpid == pid {
+			fmt.Printf("  wpid: %d (parent)\n", wpid)
+		} else {
+			fmt.Printf("  wpid: %d (child)\n", wpid)
 		}
 		if wpid < 0 {
 			return nil, fmt.Errorf("syscall.Wait4 returned wpid < 0: %d", wpid)
 		}
 
 		if waitStatus.Exited() {
-			if waitStatus.ExitStatus() != 0 {
-				return nil, &ExitError{WaitStatus: &waitStatus}
+			fmt.Printf("  Exitted\n")
+			if wpid == pid {
+				if waitStatus.ExitStatus() != 0 {
+					fmt.Printf("    ExitStatus != 0\n")
+					return nil, &ExitError{WaitStatus: &waitStatus}
+				}
+				fmt.Printf("  DONE!\n")
+				return fileMap, nil
+			} else {
+				continue
 			}
-			return fileMap, nil
-		}
-
-		if waitStatus.Stopped() {
+		} else if waitStatus.Stopped() {
+			// FIXME this logic should properly cater for children
 			signal := waitStatus.StopSignal()
-			if signal != syscall.SIGTRAP {
-				if err = syscall.PtraceCont(pid, int(signal)); err != nil {
+			fmt.Printf("  Stopped (signal %s)\n", signal)
+			switch signal := waitStatus.StopSignal(); signal {
+			case unix.SIGTRAP | 0x80:
+				fmt.Printf("    Trace\n")
+			case unix.SIGTRAP:
+				fmt.Printf("      SIGTRAP\n")
+				switch tc := waitStatus.TrapCause(); tc {
+				// case unix.PTRACE_EVENT_EXEC:
+				// 	fmt.Printf("        PTRACE_EVENT_EXEC\n")
+				// 	formerThreadId, err := unix.PtraceGetEventMsg(wpid)
+				// 	if err != nil {
+				// 		return nil, err
+				// 	}
+				// 	fmt.Printf("          formerThreadId %d\n", formerThreadId)
+
+				case unix.PTRACE_EVENT_CLONE, unix.PTRACE_EVENT_FORK, unix.PTRACE_EVENT_VFORK:
+					fmt.Printf("        Child\n")
+					childPid, err := unix.PtraceGetEventMsg(wpid)
+					if err != nil {
+						return nil, err
+					}
+					fmt.Printf("          PID %d\n", childPid)
+					if err := ptraceSetOptions(int(childPid)); err != nil {
+						return nil, err
+					}
+				default:
+					fmt.Printf("      PtraceCont %d %s\n", wpid, signal)
+					if err = unix.PtraceCont(wpid, int(signal)); err != nil {
+						return nil, err
+					}
+					continue
+				}
+			case unix.SIGSTOP:
+				fmt.Printf("      SIGSTOP\n")
+
+			default:
+				fmt.Printf("      PtraceCont %d %s\n", wpid, signal)
+				if err = unix.PtraceCont(wpid, int(signal)); err != nil {
 					return nil, err
 				}
 				continue
@@ -327,28 +402,29 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 			return nil, &ExitError{WaitStatus: &waitStatus}
 		}
 
-		var ptraceRegs syscall.PtraceRegs
-		err = syscall.PtraceGetRegs(pid, &ptraceRegs)
+		var ptraceRegs unix.PtraceRegs
+		err = unix.PtraceGetRegs(wpid, &ptraceRegs)
 		if err != nil {
+			fmt.Printf("PtraceGetRegs\n")
 			return nil, err
 		}
 
 		syscallParms := newSyscallParms(&ptraceRegs)
 
+		syscallName, ok := syscallToNameMap[syscallParms.syscall]
+		if !ok {
+			syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
+		}
+		fmt.Printf("  %s\n", syscallName)
+
 		if _, ok := ignoreSyscallsMap[syscallParms.syscall]; !ok {
 			if fn, ok := fileSyscallFnMap[syscallParms.syscall]; ok {
-				file, err := fn(pid, syscallParms)
+				file, err := fn(wpid, syscallParms)
 				if err != nil {
+					fmt.Printf("fn\n")
 					return nil, err
 				}
-				if len(file) == 0 {
-					// TODO understand why execve, first time it is called, comes with all zeroed arguments
-					if syscallParms.syscall != unix.SYS_EXECVE {
-						panic(fmt.Errorf("bug: empty path: %#v", syscallParms))
-					}
-				} else {
-					fileMap[file] = true
-				}
+				fileMap[file] = true
 			} else {
 				syscallName, ok := syscallToNameMap[syscallParms.syscall]
 				if !ok {
@@ -358,7 +434,7 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 			}
 		}
 
-		err = syscall.PtraceSyscall(pid, 0)
+		err = unix.PtraceSyscall(wpid, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -373,7 +449,7 @@ func (c *CmdPtraceFile) Id() string {
 		c.args,
 		c.env,
 		c.dir,
-		syscall.Getuid(),
-		syscall.Getgid(),
+		unix.Getuid(),
+		unix.Getgid(),
 	)
 }

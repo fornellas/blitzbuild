@@ -1,8 +1,8 @@
 package cmd
 
-import "syscall"
+import "golang.org/x/sys/unix"
 
-func newSyscallParms(ptraceRegs *syscall.PtraceRegs) *syscallParms {
+func newSyscallParms(ptraceRegs *unix.PtraceRegs) *syscallParms {
 	return &syscallParms{
 		syscall: ptraceRegs.Orig_rax,
 		arg1:    ptraceRegs.Rdi,

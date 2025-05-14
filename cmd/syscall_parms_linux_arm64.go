@@ -1,10 +1,10 @@
 package cmd
 
-import "syscall"
+import "golang.org/x/sys/unix"
 
-func newSyscallParms(ptraceRegs *syscall.PtraceRegs) *syscallParms {
+func newSyscallParms(ptraceRegs *unix.PtraceRegs) *syscallParms {
 	return &syscallParms{
-		// TODO validate what Gemini said here, unsure how to maap registers from Regs[] to
+		// TODO validate what Gemini said here, unsure how to map registers from Regs[] to
 		// the names from syscall(2)
 		syscall: ptraceRegs.Regs[8], // w8
 		arg1:    ptraceRegs.Regs[0], // x0
