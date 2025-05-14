@@ -2,7 +2,10 @@ package cmd
 
 import "golang.org/x/sys/unix"
 
-func newSyscallParms(ptraceRegs *unix.PtraceRegs) *syscallParms {
+func newSyscallParms(ptraceRegs *unix.PtraceRegs) (*syscallParms, bool) {
+	if ptraceRegs.Orig_rax == ^uint64(0) {
+		return nil, false
+	}
 	return &syscallParms{
 		syscall: ptraceRegs.Orig_rax,
 		arg1:    ptraceRegs.Rdi,
@@ -13,5 +16,5 @@ func newSyscallParms(ptraceRegs *unix.PtraceRegs) *syscallParms {
 		arg6:    ptraceRegs.R9,
 		retVal:  ptraceRegs.Rax,
 		retVal2: ptraceRegs.Rdx,
-	}
+	}, true
 }

@@ -78,6 +78,9 @@ var ignoreSyscallsMap = map[uint64]bool{
 }
 
 func getSyscallArgPath(pid int, arg uint64) (string, error) {
+	if arg == 0 {
+		return "(nil)", nil
+	}
 	var path [unix.PathMax]byte
 	for i := range unix.PathMax {
 		buff := [1]byte{}
@@ -99,27 +102,27 @@ func getSyscallArgPath(pid int, arg uint64) (string, error) {
 // fileSyscallFnMap maps filesystem related syscalls to functions that extract the file path from
 // it.
 var fileSyscallFnMap = map[uint64]func(int, *syscallParms) (string, error){
-	unix.SYS_CHDIR: func(pid int, scMap *syscallParms) (string, error) {
-		pathName, err := getSyscallArgPath(pid, scMap.arg1)
+	unix.SYS_CHDIR: func(pid int, scParms *syscallParms) (string, error) {
+		pathName, err := getSyscallArgPath(pid, scParms.arg1)
 		if err != nil {
 			return "", err
 		}
 		return pathName, nil
 	},
-	unix.SYS_EXECVE: func(pid int, scMap *syscallParms) (string, error) {
-		pathName, err := getSyscallArgPath(pid, scMap.arg1)
+	unix.SYS_EXECVE: func(pid int, scParms *syscallParms) (string, error) {
+		pathName, err := getSyscallArgPath(pid, scParms.arg1)
 		if err != nil {
 			return "", err
 		}
 		return pathName, nil
 	},
-	unix.SYS_NEWFSTATAT: func(pid int, scMap *syscallParms) (string, error) {
-		path, err := getSyscallArgPath(pid, scMap.arg2)
+	unix.SYS_NEWFSTATAT: func(pid int, scParms *syscallParms) (string, error) {
+		path, err := getSyscallArgPath(pid, scParms.arg2)
 		if err != nil {
-			return "", fmt.Errorf("NEWFSTAT: %w", err)
+			return "", err
 		}
 		if !filepath.IsAbs(path) {
-			dirfd := *(*int32)(unsafe.Pointer(&scMap.arg1))
+			dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
 			if dirfd == unix.AT_FDCWD {
 				wd, err := os.Getwd()
 				if err != nil {
@@ -136,13 +139,13 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) (string, error){
 		}
 		return filepath.Clean(path), nil
 	},
-	unix.SYS_OPENAT: func(pid int, scMap *syscallParms) (string, error) {
-		path, err := getSyscallArgPath(pid, scMap.arg2)
+	unix.SYS_OPENAT: func(pid int, scParms *syscallParms) (string, error) {
+		path, err := getSyscallArgPath(pid, scParms.arg2)
 		if err != nil {
 			return "", err
 		}
 		if !filepath.IsAbs(path) {
-			dirfd := *(*int32)(unsafe.Pointer(&scMap.arg1))
+			dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
 			if dirfd == unix.AT_FDCWD {
 				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
 				if err != nil {
@@ -159,12 +162,45 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) (string, error){
 		}
 		return filepath.Clean(path), nil
 	},
-	unix.SYS_STATFS: func(pid int, scMap *syscallParms) (string, error) {
-		pathName, err := getSyscallArgPath(pid, scMap.arg1)
+	unix.SYS_STATFS: func(pid int, scParms *syscallParms) (string, error) {
+		pathName, err := getSyscallArgPath(pid, scParms.arg1)
 		if err != nil {
 			return "", err
 		}
 		return pathName, nil
+	},
+	unix.SYS_STATX: func(pid int, scParms *syscallParms) (string, error) {
+		path, err := getSyscallArgPath(pid, scParms.arg2)
+		if err != nil {
+			return "", err
+		}
+		if len(path) > 0 {
+			if !filepath.IsAbs(path) {
+				dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
+				if dirfd == unix.AT_FDCWD {
+					wd, err := os.Getwd()
+					if err != nil {
+						return "", nil
+					}
+					path = filepath.Join(wd, path)
+				} else {
+					dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
+					if err != nil {
+						return "", err
+					}
+					path = filepath.Join(dirfdPath, path)
+				}
+			}
+		} else {
+			if (scParms.arg3 & unix.AT_EMPTY_PATH) == unix.AT_EMPTY_PATH {
+				dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
+				path, err = os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
+				if err != nil {
+					return "", err
+				}
+			}
+		}
+		return filepath.Clean(path), nil
 	},
 }
 
@@ -328,63 +364,109 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 			// }
 			return nil, err
 		}
+		d := "parent"
+		if pid != cmd.Process.Pid {
+			d = "child"
+		}
+		fmt.Printf("PID: %d (%s)\n", pid, d)
 
-		var injectSignal unix.Signal
+		var signal unix.Signal
 		if waitStatus.Exited() {
+			fmt.Printf("  Exited\n")
 			if pid == cmd.Process.Pid {
+				fmt.Printf("  Parent\n")
 				if waitStatus.ExitStatus() != 0 {
 					return nil, &ExitError{WaitStatus: &waitStatus}
 				}
 				return fileMap, nil
 			}
+			fmt.Printf("  Child\n")
 			continue
 		} else if waitStatus.Signaled() {
+			fmt.Printf("  Signaled\n")
 			continue
 		} else if waitStatus.Stopped() {
-			switch signal := waitStatus.StopSignal(); signal {
+			fmt.Printf("  Stopped\n")
+			switch stopSignal := waitStatus.StopSignal(); stopSignal {
 			case unix.SIGTRAP | 0x80:
+				fmt.Printf("    SIGTRAP | 0x80\n")
+				switch tc := waitStatus.TrapCause(); tc {
+				case unix.PTRACE_EVENT_EXEC, unix.PTRACE_EVENT_CLONE, unix.PTRACE_EVENT_FORK, unix.PTRACE_EVENT_VFORK:
+					fmt.Printf("      PTRACE_EVENT_EXEC, PTRACE_EVENT_CLONE, PTRACE_EVENT_FORK, PTRACE_EVENT_VFORK\n")
+					msgPid, err := unix.PtraceGetEventMsg(pid)
+					if err != nil {
+						return nil, err
+					}
+					fmt.Printf("       msgPid: %d\n", msgPid)
+				default:
+					fmt.Printf("      TrapCause: %d\n", tc)
+				}
+
 				var ptraceRegs unix.PtraceRegs
 				err = unix.PtraceGetRegs(pid, &ptraceRegs)
 				if err != nil {
 					return nil, err
 				}
 
-				syscallParms := newSyscallParms(&ptraceRegs)
-				if _, ok := ignoreSyscallsMap[syscallParms.syscall]; !ok {
-					if fn, ok := fileSyscallFnMap[syscallParms.syscall]; ok {
-						file, err := fn(pid, syscallParms)
-						if err != nil {
-							return nil, err
-						}
-						fileMap[file] = true
-					} else {
-						syscallName, ok := syscallToNameMap[syscallParms.syscall]
-						if !ok {
-							syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
-						}
-						return nil, fmt.Errorf("Unknown syscall: %s: %#v", syscallName, syscallParms)
+				syscallParms, ok := newSyscallParms(&ptraceRegs)
+				if ok {
+					syscallName, ok := syscallToNameMap[syscallParms.syscall]
+					if !ok {
+						syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
 					}
+					fmt.Printf("      %#v\n", syscallName)
+					fmt.Printf("        %#v\n", syscallParms)
+					if _, ok := ignoreSyscallsMap[syscallParms.syscall]; !ok {
+						if fn, ok := fileSyscallFnMap[syscallParms.syscall]; ok {
+							file, err := fn(pid, syscallParms)
+							if err != nil {
+								return nil, err
+							}
+							fileMap[file] = true
+						} else {
+							syscallName, ok := syscallToNameMap[syscallParms.syscall]
+							if !ok {
+								syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
+							}
+							return nil, fmt.Errorf("Unknown syscall: %s: %#v", syscallName, syscallParms)
+						}
+					}
+				} else {
+					fmt.Printf("      not a syscall\n")
 				}
 			case unix.SIGSTOP:
+				fmt.Printf("    SIGSTOP\n")
 				fallthrough
 			case unix.SIGTSTP, unix.SIGTTOU, unix.SIGTTIN:
-				injectSignal = signal
+				fmt.Printf("    SIGTSTP, SIGTTOU, SIGTTIN\n")
+				signal = stopSignal
 			case unix.SIGTRAP:
+				fmt.Printf("    SIGTRAP\n")
 				switch tc := waitStatus.TrapCause(); tc {
-				case unix.PTRACE_EVENT_CLONE, unix.PTRACE_EVENT_FORK, unix.PTRACE_EVENT_VFORK:
-					_, err := unix.PtraceGetEventMsg(pid)
+				case unix.PTRACE_EVENT_EXEC, unix.PTRACE_EVENT_CLONE, unix.PTRACE_EVENT_FORK, unix.PTRACE_EVENT_VFORK:
+					fmt.Printf("      PTRACE_EVENT_EXEC, PTRACE_EVENT_CLONE, PTRACE_EVENT_FORK, PTRACE_EVENT_VFORK\n")
+					msgPid, err := unix.PtraceGetEventMsg(pid)
 					if err != nil {
 						return nil, err
 					}
+					fmt.Printf("       msgPid: %d\n", msgPid)
 				default:
-					injectSignal = signal
+					fmt.Printf("      default\n")
+					signal = stopSignal
 				}
 			default:
-				injectSignal = signal
+				fmt.Printf("    default\n")
+				signal = stopSignal
 			}
 		}
 
-		if err := unix.PtraceSyscall(pid, int(injectSignal)); err != nil {
+		signalName, ok := signalNameMap[signal]
+		if !ok {
+			signalName = fmt.Sprintf("%d", signal)
+		}
+
+		fmt.Printf("  PtraceSyscall(%d, %s)\n", pid, signalName)
+		if err := unix.PtraceSyscall(pid, int(signal)); err != nil {
 			return nil, err
 		}
 	}

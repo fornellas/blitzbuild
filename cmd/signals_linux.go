@@ -1,0 +1,37 @@
+package cmd
+
+import "syscall"
+
+var signalNameMap = map[syscall.Signal]string{
+	syscall.Signal(0x1):  "SIGHUP",
+	syscall.Signal(0x10): "SIGSTKFLT",
+	syscall.Signal(0x11): "SIGCHLD|SIGCLD",
+	syscall.Signal(0x12): "SIGCONT",
+	syscall.Signal(0x13): "SIGSTOP",
+	syscall.Signal(0x14): "SIGTSTP",
+	syscall.Signal(0x15): "SIGTTIN",
+	syscall.Signal(0x16): "SIGTTOU",
+	syscall.Signal(0x17): "SIGURG",
+	syscall.Signal(0x18): "SIGXCPU",
+	syscall.Signal(0x19): "SIGXFSZ",
+	syscall.Signal(0x1a): "SIGVTALRM",
+	syscall.Signal(0x1b): "SIGPROF",
+	syscall.Signal(0x1c): "SIGWINCH",
+	syscall.Signal(0x1d): "SIGPOLL|SIGIO",
+	syscall.Signal(0x1e): "SIGPWR",
+	syscall.Signal(0x1f): "SIGSYS",
+	syscall.Signal(0x2):  "SIGINT",
+	syscall.Signal(0x3):  "SIGQUIT",
+	syscall.Signal(0x4):  "SIGILL",
+	syscall.Signal(0x5):  "SIGTRAP",
+	syscall.Signal(0x6):  "SIGABRT|SIGIOT",
+	syscall.Signal(0x7):  "SIGBUS",
+	syscall.Signal(0x8):  "SIGFPE",
+	syscall.Signal(0x9):  "SIGKILL",
+	syscall.Signal(0xa):  "SIGUSR1",
+	syscall.Signal(0xb):  "SIGSEGV",
+	syscall.Signal(0xc):  "SIGUSR2",
+	syscall.Signal(0xd):  "SIGPIPE",
+	syscall.Signal(0xe):  "SIGALRM",
+	syscall.Signal(0xf):  "SIGTERM",
+}
