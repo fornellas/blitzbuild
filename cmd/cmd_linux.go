@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -57,15 +58,20 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_FCNTL:             true,
 	unix.SYS_FLOCK:             true,
 	unix.SYS_FSTAT:             true,
+	unix.SYS_FTRUNCATE:         true,
 	unix.SYS_FUTEX:             true,
 	unix.SYS_GETCWD:            true,
 	unix.SYS_GETDENTS64:        true,
 	unix.SYS_GETEGID:           true,
 	unix.SYS_GETEUID:           true,
 	unix.SYS_GETGID:            true,
+	unix.SYS_GETGROUPS:         true,
+	unix.SYS_GETPEERNAME:       true,
+	unix.SYS_GETPGRP:           true,
 	unix.SYS_GETPID:            true,
 	unix.SYS_GETPPID:           true,
 	unix.SYS_GETRANDOM:         true,
+	unix.SYS_GETRLIMIT:         true,
 	unix.SYS_GETTID:            true,
 	unix.SYS_GETUID:            true,
 	unix.SYS_IOCTL:             true,
@@ -89,6 +95,8 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_RT_SIGRETURN:      true,
 	unix.SYS_SCHED_GETAFFINITY: true,
 	unix.SYS_SCHED_YIELD:       true,
+	unix.SYS_SETRESGID:         true,
+	unix.SYS_SETRESUID:         true,
 	unix.SYS_SET_ROBUST_LIST:   true,
 	unix.SYS_SET_TID_ADDRESS:   true,
 	unix.SYS_SIGALTSTACK:       true,
@@ -121,7 +129,7 @@ func getSyscallArgPath(pid int, arg uint64) (string, error) {
 	return "", errors.New("path exceeds syscall.PathMax")
 }
 
-func getSyscallArg1Path(pid int, scParms *syscallParms) ([]string, error) {
+func getSyscallPath(pid int, scParms *syscallParms) ([]string, error) {
 	path, err := getSyscallArgPath(pid, scParms.arg1)
 	if err != nil {
 		return nil, err
@@ -129,7 +137,7 @@ func getSyscallArg1Path(pid int, scParms *syscallParms) ([]string, error) {
 	return []string{path}, nil
 }
 
-func getSyscallAtPath(pid int, scParms *syscallParms) ([]string, error) {
+func getSyscallDirfdPath(pid int, scParms *syscallParms) ([]string, error) {
 	path, err := getSyscallArgPath(pid, scParms.arg2)
 	if err != nil {
 		return nil, err
@@ -156,15 +164,16 @@ func getSyscallAtPath(pid int, scParms *syscallParms) ([]string, error) {
 // fileSyscallFnMap maps filesystem related syscalls to functions that extract the file path from
 // it.
 var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
-	unix.SYS_CHDIR:      getSyscallArg1Path,
-	unix.SYS_EXECVE:     getSyscallArg1Path,
-	unix.SYS_FACCESSAT2: getSyscallAtPath,
-	unix.SYS_FTRUNCATE:  getSyscallArg1Path,
-	unix.SYS_MKDIRAT:    getSyscallAtPath,
-	unix.SYS_NEWFSTATAT: getSyscallAtPath,
-	unix.SYS_OPENAT:     getSyscallAtPath,
-	unix.SYS_READLINK:   getSyscallArg1Path,
-	unix.SYS_READLINKAT: getSyscallAtPath,
+	unix.SYS_CHDIR:      getSyscallPath,
+	unix.SYS_EXECVE:     getSyscallPath,
+	unix.SYS_FACCESSAT2: getSyscallDirfdPath,
+	unix.SYS_FTRUNCATE:  getSyscallPath,
+	unix.SYS_MKDIRAT:    getSyscallDirfdPath,
+	unix.SYS_NEWFSTATAT: getSyscallDirfdPath,
+	unix.SYS_OPEN:       getSyscallPath,
+	unix.SYS_OPENAT:     getSyscallDirfdPath,
+	unix.SYS_READLINK:   getSyscallPath,
+	unix.SYS_READLINKAT: getSyscallDirfdPath,
 	unix.SYS_RENAME: func(pid int, scParms *syscallParms) ([]string, error) {
 		path1, err := getSyscallArgPath(pid, scParms.arg1)
 		if err != nil {
@@ -176,11 +185,12 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 		}
 		return []string{path1, path2}, nil
 	},
-	unix.SYS_STATFS:    getSyscallArg1Path,
-	unix.SYS_STATX:     getSyscallAtPath,
-	unix.SYS_UNLINK:    getSyscallArg1Path,
-	unix.SYS_UNLINKAT:  getSyscallAtPath,
-	unix.SYS_UTIMENSAT: getSyscallAtPath,
+	unix.SYS_STATFS:    getSyscallPath,
+	unix.SYS_STAT:      getSyscallPath,
+	unix.SYS_STATX:     getSyscallDirfdPath,
+	unix.SYS_UNLINK:    getSyscallPath,
+	unix.SYS_UNLINKAT:  getSyscallDirfdPath,
+	unix.SYS_UTIMENSAT: getSyscallDirfdPath,
 }
 
 // ExitError reports an unsuccessful exit by a command.
@@ -368,9 +378,15 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 			fmt.Printf("  Stopped\n")
 			switch stopSignal := waitStatus.StopSignal(); stopSignal {
 			case unix.SIGTRAP | 0x80:
+				fmt.Printf("    SIGTRAP | 0x80\n")
 				var ptraceRegs unix.PtraceRegs
 				err = unix.PtraceGetRegs(pid, &ptraceRegs)
 				if err != nil {
+					if errno, ok := err.(syscall.Errno); ok {
+						if errno == syscall.ESRCH && pid != cmd.Process.Pid {
+							continue
+						}
+					}
 					return nil, err
 				}
 
@@ -438,6 +454,11 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 
 		fmt.Printf("  PtraceSyscall(%d, %s)\n", pid, signalName)
 		if err := unix.PtraceSyscall(pid, int(signal)); err != nil {
+			if errno, ok := err.(syscall.Errno); ok {
+				if errno == syscall.ESRCH && pid != cmd.Process.Pid {
+					continue
+				}
+			}
 			return nil, err
 		}
 	}

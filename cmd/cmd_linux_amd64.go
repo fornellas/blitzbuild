@@ -6,5 +6,5 @@ func init() {
 	ignoreSyscallsMap[unix.SYS_ARCH_PRCTL] = true
 	ignoreSyscallsMap[unix.SYS_VFORK] = true
 
-	fileSyscallFnMap[unix.SYS_ACCESS] = getSyscallArg1Path
+	fileSyscallFnMap[unix.SYS_ACCESS] = getSyscallPath
 }
