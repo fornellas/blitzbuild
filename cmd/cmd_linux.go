@@ -36,6 +36,7 @@ type syscallParms struct {
 // these syscalls don't relate to filesystem, so we can ignore them.
 var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_ACCEPT:            true,
+	unix.SYS_ACCEPT4:           true,
 	unix.SYS_ADJTIMEX:          true,
 	unix.SYS_ALARM:             true,
 	unix.SYS_BIND:              true,
@@ -200,6 +201,7 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_WAITID:            true,
 	unix.SYS_WRITE:             true,
 	unix.SYS_WRITEV:            true,
+	unix.SYS_UMASK:             true,
 }
 
 func getSyscallArgPath(pid int, arg uint64) (string, error) {
@@ -265,9 +267,11 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 	unix.SYS_EXECVE:     getSyscallPath,
 	unix.SYS_FACCESSAT2: getSyscallDirfdPath,
 	unix.SYS_FCHMODAT:   getSyscallDirfdPath,
+	unix.SYS_FCHOWNAT:   getSyscallDirfdPath,
 	unix.SYS_FTRUNCATE:  getSyscallPath,
 	unix.SYS_MKDIR:      getSyscallPath,
 	unix.SYS_MKDIRAT:    getSyscallDirfdPath,
+	unix.SYS_MKNODAT:    getSyscallDirfdPath,
 	unix.SYS_NEWFSTATAT: getSyscallDirfdPath,
 	unix.SYS_OPEN:       getSyscallPath,
 	unix.SYS_OPENAT:     getSyscallDirfdPath,
@@ -284,9 +288,11 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 		}
 		return []string{path1, path2}, nil
 	},
-	unix.SYS_STATFS:    getSyscallPath,
-	unix.SYS_STAT:      getSyscallPath,
-	unix.SYS_STATX:     getSyscallDirfdPath,
+	// unix.SYS_RENAMEAT: ,
+	unix.SYS_STATFS: getSyscallPath,
+	unix.SYS_STAT:   getSyscallPath,
+	unix.SYS_STATX:  getSyscallDirfdPath,
+	// unix.SYS_SYMLINKAT: ,
 	unix.SYS_UNLINK:    getSyscallPath,
 	unix.SYS_UNLINKAT:  getSyscallDirfdPath,
 	unix.SYS_UTIMENSAT: getSyscallDirfdPath,
