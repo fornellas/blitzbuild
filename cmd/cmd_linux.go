@@ -452,32 +452,32 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 			// }
 			return nil, err
 		}
-		d := "parent"
-		if pid != cmd.Process.Pid {
-			d = "child"
-		}
-		fmt.Printf("PID: %d (%s)\n", pid, d)
+		// d := "parent"
+		// if pid != cmd.Process.Pid {
+		// 	d = "child"
+		// }
+		// fmt.Printf("PID: %d (%s)\n", pid, d)
 
 		var signal unix.Signal
 		if waitStatus.Exited() {
-			fmt.Printf("  Exited\n")
+			// fmt.Printf("  Exited\n")
 			if pid == cmd.Process.Pid {
-				fmt.Printf("  Parent\n")
+				// fmt.Printf("  Parent\n")
 				if waitStatus.ExitStatus() != 0 {
 					return nil, &ExitError{WaitStatus: &waitStatus}
 				}
 				return fileMap, nil
 			}
-			fmt.Printf("  Child\n")
+			// fmt.Printf("  Child\n")
 			continue
 		} else if waitStatus.Signaled() {
-			fmt.Printf("  Signaled\n")
+			// fmt.Printf("  Signaled\n")
 			continue
 		} else if waitStatus.Stopped() {
-			fmt.Printf("  Stopped\n")
+			// fmt.Printf("  Stopped\n")
 			switch stopSignal := waitStatus.StopSignal(); stopSignal {
 			case unix.SIGTRAP | 0x80:
-				fmt.Printf("    SIGTRAP | 0x80\n")
+				// fmt.Printf("    SIGTRAP | 0x80\n")
 				var ptraceRegs unix.PtraceRegs
 				err = unix.PtraceGetRegs(pid, &ptraceRegs)
 				if err != nil {
@@ -491,12 +491,12 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 
 				syscallParms, ok := newSyscallParms(&ptraceRegs)
 				if ok {
-					syscallName, ok := syscallToNameMap[syscallParms.syscall]
-					if !ok {
-						syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
-					}
-					fmt.Printf("      %#v\n", syscallName)
-					fmt.Printf("        %#v\n", syscallParms)
+					// syscallName, ok := syscallToNameMap[syscallParms.syscall]
+					// if !ok {
+					// 	syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
+					// }
+					// fmt.Printf("      %#v\n", syscallName)
+					// fmt.Printf("        %#v\n", syscallParms)
 					if _, ok := ignoreSyscallsMap[syscallParms.syscall]; !ok {
 						if fn, ok := fileSyscallFnMap[syscallParms.syscall]; ok {
 							files, err := fn(pid, syscallParms)
@@ -505,7 +505,7 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 							}
 							for _, file := range files {
 								if len(file) > 0 {
-									fmt.Printf("        file: %s\n", file)
+									// fmt.Printf("        file: %s\n", file)
 									fileMap[file] = true
 								}
 							}
@@ -518,40 +518,39 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 						}
 					}
 				} else {
-					fmt.Printf("      not a syscall\n")
+					// fmt.Printf("      not a syscall\n")
 				}
 			case unix.SIGSTOP:
-				fmt.Printf("    SIGSTOP\n")
+				// fmt.Printf("    SIGSTOP\n")
 				fallthrough
 			case unix.SIGTSTP, unix.SIGTTOU, unix.SIGTTIN:
-				fmt.Printf("    SIGTSTP, SIGTTOU, SIGTTIN\n")
+				// fmt.Printf("    SIGTSTP, SIGTTOU, SIGTTIN\n")
 				signal = stopSignal
 			case unix.SIGTRAP:
-				fmt.Printf("    SIGTRAP\n")
+				// fmt.Printf("    SIGTRAP\n")
 				switch tc := waitStatus.TrapCause(); tc {
 				case unix.PTRACE_EVENT_EXEC, unix.PTRACE_EVENT_CLONE, unix.PTRACE_EVENT_FORK, unix.PTRACE_EVENT_VFORK:
-					fmt.Printf("      PTRACE_EVENT_EXEC, PTRACE_EVENT_CLONE, PTRACE_EVENT_FORK, PTRACE_EVENT_VFORK\n")
-					msgPid, err := unix.PtraceGetEventMsg(pid)
-					if err != nil {
-						return nil, err
-					}
-					fmt.Printf("       msgPid: %d\n", msgPid)
+					// fmt.Printf("      PTRACE_EVENT_EXEC, PTRACE_EVENT_CLONE, PTRACE_EVENT_FORK, PTRACE_EVENT_VFORK\n")
+					// msgPid, err := unix.PtraceGetEventMsg(pid)
+					// if err != nil {
+					// 	return nil, err
+					// }
+					// fmt.Printf("       msgPid: %d\n", msgPid)
 				default:
-					fmt.Printf("      default\n")
+					// fmt.Printf("      default\n")
 					signal = stopSignal
 				}
 			default:
-				fmt.Printf("    default\n")
+				// fmt.Printf("    default\n")
 				signal = stopSignal
 			}
 		}
 
-		signalName, ok := signalNameMap[signal]
-		if !ok {
-			signalName = fmt.Sprintf("%d", signal)
-		}
-
-		fmt.Printf("  PtraceSyscall(%d, %s)\n", pid, signalName)
+		// signalName, ok := signalNameMap[signal]
+		// if !ok {
+		// 	signalName = fmt.Sprintf("%d", signal)
+		// }
+		// fmt.Printf("  PtraceSyscall(%d, %s)\n", pid, signalName)
 		if err := unix.PtraceSyscall(pid, int(signal)); err != nil {
 			if errno, ok := err.(syscall.Errno); ok {
 				if errno == syscall.ESRCH && pid != cmd.Process.Pid {
