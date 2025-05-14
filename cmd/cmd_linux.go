@@ -41,8 +41,20 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_DUP2:              true,
 	unix.SYS_DUP3:              true,
 	unix.SYS_DUP:               true,
+	unix.SYS_EPOLL_CREATE1:     true,
+	unix.SYS_EPOLL_CREATE:      true,
+	unix.SYS_EPOLL_CTL:         true,
+	unix.SYS_EPOLL_CTL_OLD:     true,
+	unix.SYS_EPOLL_PWAIT2:      true,
+	unix.SYS_EPOLL_PWAIT:       true,
+	unix.SYS_EPOLL_WAIT:        true,
+	unix.SYS_EPOLL_WAIT_OLD:    true,
+	unix.SYS_EVENTFD2:          true,
+	unix.SYS_EVENTFD:           true,
 	unix.SYS_EXIT_GROUP:        true,
+	unix.SYS_FADVISE64:         true,
 	unix.SYS_FCNTL:             true,
+	unix.SYS_FLOCK:             true,
 	unix.SYS_FSTAT:             true,
 	unix.SYS_FUTEX:             true,
 	unix.SYS_GETCWD:            true,
@@ -61,21 +73,27 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_MPROTECT:          true,
 	unix.SYS_MUNMAP:            true,
 	unix.SYS_NANOSLEEP:         true,
+	unix.SYS_PIDFD_OPEN:        true,
+	unix.SYS_PIDFD_SEND_SIGNAL: true,
 	unix.SYS_PIPE2:             true,
 	unix.SYS_PIPE:              true,
 	unix.SYS_PREAD64:           true,
 	unix.SYS_PRLIMIT64:         true,
 	unix.SYS_READ:              true,
+	unix.SYS_RESTART_SYSCALL:   true,
 	unix.SYS_RSEQ:              true,
 	unix.SYS_RT_SIGACTION:      true,
 	unix.SYS_RT_SIGPROCMASK:    true,
 	unix.SYS_RT_SIGRETURN:      true,
 	unix.SYS_SCHED_GETAFFINITY: true,
+	unix.SYS_SCHED_YIELD:       true,
 	unix.SYS_SET_ROBUST_LIST:   true,
 	unix.SYS_SET_TID_ADDRESS:   true,
 	unix.SYS_SIGALTSTACK:       true,
 	unix.SYS_TGKILL:            true,
+	unix.SYS_UNAME:             true,
 	unix.SYS_WAIT4:             true,
+	unix.SYS_WAITID:            true,
 	unix.SYS_WRITE:             true,
 }
 
@@ -101,109 +119,55 @@ func getSyscallArgPath(pid int, arg uint64) (string, error) {
 	return "", errors.New("path exceeds syscall.PathMax")
 }
 
+func getSyscallArg1Path(pid int, scParms *syscallParms) (string, error) {
+	path, err := getSyscallArgPath(pid, scParms.arg1)
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func getSyscallAtPath(pid int, scParms *syscallParms) (string, error) {
+	path, err := getSyscallArgPath(pid, scParms.arg2)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(path) {
+		dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
+		if dirfd == unix.AT_FDCWD {
+			cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+			if err != nil {
+				return "", err
+			}
+			path = filepath.Join(cwd, path)
+		} else {
+			dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
+			if err != nil {
+				return "", err
+			}
+			path = filepath.Join(dirfdPath, path)
+		}
+	}
+	return filepath.Clean(path), nil
+}
+
 // fileSyscallFnMap maps filesystem related syscalls to functions that extract the file path from
 // it.
 var fileSyscallFnMap = map[uint64]func(int, *syscallParms) (string, error){
-	unix.SYS_CHDIR: func(pid int, scParms *syscallParms) (string, error) {
-		pathName, err := getSyscallArgPath(pid, scParms.arg1)
-		if err != nil {
-			return "", err
-		}
-		return pathName, nil
-	},
-	unix.SYS_EXECVE: func(pid int, scParms *syscallParms) (string, error) {
-		pathName, err := getSyscallArgPath(pid, scParms.arg1)
-		if err != nil {
-			return "", err
-		}
-		return pathName, nil
-	},
-	unix.SYS_NEWFSTATAT: func(pid int, scParms *syscallParms) (string, error) {
-		path, err := getSyscallArgPath(pid, scParms.arg2)
-		if err != nil {
-			return "", err
-		}
-		if !filepath.IsAbs(path) {
-			dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
-			if dirfd == unix.AT_FDCWD {
-				wd, err := os.Getwd()
-				if err != nil {
-					return "", nil
-				}
-				path = filepath.Join(wd, path)
-			} else {
-				dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
-				if err != nil {
-					return "", err
-				}
-				path = filepath.Join(dirfdPath, path)
-			}
-		}
-		return filepath.Clean(path), nil
-	},
-	unix.SYS_OPENAT: func(pid int, scParms *syscallParms) (string, error) {
-		path, err := getSyscallArgPath(pid, scParms.arg2)
-		if err != nil {
-			return "", err
-		}
-		if !filepath.IsAbs(path) {
-			dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
-			if dirfd == unix.AT_FDCWD {
-				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
-				if err != nil {
-					return "", err
-				}
-				path = filepath.Join(cwd, path)
-			} else {
-				dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
-				if err != nil {
-					return "", err
-				}
-				path = filepath.Join(dirfdPath, path)
-			}
-		}
-		return filepath.Clean(path), nil
-	},
-	unix.SYS_STATFS: func(pid int, scParms *syscallParms) (string, error) {
-		pathName, err := getSyscallArgPath(pid, scParms.arg1)
-		if err != nil {
-			return "", err
-		}
-		return pathName, nil
-	},
-	unix.SYS_STATX: func(pid int, scParms *syscallParms) (string, error) {
-		path, err := getSyscallArgPath(pid, scParms.arg2)
-		if err != nil {
-			return "", err
-		}
-		if len(path) > 0 {
-			if !filepath.IsAbs(path) {
-				dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
-				if dirfd == unix.AT_FDCWD {
-					wd, err := os.Getwd()
-					if err != nil {
-						return "", nil
-					}
-					path = filepath.Join(wd, path)
-				} else {
-					dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
-					if err != nil {
-						return "", err
-					}
-					path = filepath.Join(dirfdPath, path)
-				}
-			}
-		} else {
-			if (scParms.arg3 & unix.AT_EMPTY_PATH) == unix.AT_EMPTY_PATH {
-				dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
-				path, err = os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
-				if err != nil {
-					return "", err
-				}
-			}
-		}
-		return filepath.Clean(path), nil
-	},
+	unix.SYS_CHDIR:      getSyscallArg1Path,
+	unix.SYS_EXECVE:     getSyscallArg1Path,
+	unix.SYS_FACCESSAT2: getSyscallAtPath,
+	unix.SYS_FTRUNCATE:  getSyscallArg1Path,
+	unix.SYS_MKDIRAT:    getSyscallAtPath,
+	unix.SYS_NEWFSTATAT: getSyscallAtPath,
+	unix.SYS_OPENAT:     getSyscallAtPath,
+	unix.SYS_READLINK:   getSyscallArg1Path,
+	unix.SYS_READLINKAT: getSyscallAtPath,
+	unix.SYS_STATFS:     getSyscallArg1Path,
+	unix.SYS_STATX:      getSyscallAtPath,
+	unix.SYS_UNLINK:     getSyscallArg1Path,
+	unix.SYS_UNLINKAT:   getSyscallAtPath,
+	unix.SYS_UTIMENSAT:  getSyscallAtPath,
 }
 
 // ExitError reports an unsuccessful exit by a command.
