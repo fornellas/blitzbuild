@@ -41,10 +41,10 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_DUP2:              true,
 	unix.SYS_DUP3:              true,
 	unix.SYS_DUP:               true,
-	unix.SYS_FUTEX:             true,
 	unix.SYS_EXIT_GROUP:        true,
 	unix.SYS_FCNTL:             true,
 	unix.SYS_FSTAT:             true,
+	unix.SYS_FUTEX:             true,
 	unix.SYS_GETCWD:            true,
 	unix.SYS_GETDENTS64:        true,
 	unix.SYS_GETEGID:           true,
@@ -60,6 +60,7 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_MMAP:              true,
 	unix.SYS_MPROTECT:          true,
 	unix.SYS_MUNMAP:            true,
+	unix.SYS_NANOSLEEP:         true,
 	unix.SYS_PIPE2:             true,
 	unix.SYS_PIPE:              true,
 	unix.SYS_PREAD64:           true,
@@ -73,13 +74,14 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_SET_ROBUST_LIST:   true,
 	unix.SYS_SET_TID_ADDRESS:   true,
 	unix.SYS_SIGALTSTACK:       true,
+	unix.SYS_TGKILL:            true,
 	unix.SYS_WAIT4:             true,
 	unix.SYS_WRITE:             true,
 }
 
 func getSyscallArgPath(pid int, arg uint64) (string, error) {
 	if arg == 0 {
-		return "(nil)", nil
+		return "", nil
 	}
 	var path [unix.PathMax]byte
 	for i := range unix.PathMax {
@@ -422,7 +424,10 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 							if err != nil {
 								return nil, err
 							}
-							fileMap[file] = true
+							if len(file) > 0 {
+								fmt.Printf("        file: %s\n", file)
+								fileMap[file] = true
+							}
 						} else {
 							syscallName, ok := syscallToNameMap[syscallParms.syscall]
 							if !ok {
