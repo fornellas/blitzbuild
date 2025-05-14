@@ -121,41 +121,41 @@ func getSyscallArgPath(pid int, arg uint64) (string, error) {
 	return "", errors.New("path exceeds syscall.PathMax")
 }
 
-func getSyscallArg1Path(pid int, scParms *syscallParms) (string, error) {
+func getSyscallArg1Path(pid int, scParms *syscallParms) ([]string, error) {
 	path, err := getSyscallArgPath(pid, scParms.arg1)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return path, nil
+	return []string{path}, nil
 }
 
-func getSyscallAtPath(pid int, scParms *syscallParms) (string, error) {
+func getSyscallAtPath(pid int, scParms *syscallParms) ([]string, error) {
 	path, err := getSyscallArgPath(pid, scParms.arg2)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if !filepath.IsAbs(path) {
 		dirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
 		if dirfd == unix.AT_FDCWD {
 			cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			path = filepath.Join(cwd, path)
 		} else {
 			dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			path = filepath.Join(dirfdPath, path)
 		}
 	}
-	return filepath.Clean(path), nil
+	return []string{filepath.Clean(path)}, nil
 }
 
 // fileSyscallFnMap maps filesystem related syscalls to functions that extract the file path from
 // it.
-var fileSyscallFnMap = map[uint64]func(int, *syscallParms) (string, error){
+var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 	unix.SYS_CHDIR:      getSyscallArg1Path,
 	unix.SYS_EXECVE:     getSyscallArg1Path,
 	unix.SYS_FACCESSAT2: getSyscallAtPath,
@@ -165,11 +165,22 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) (string, error){
 	unix.SYS_OPENAT:     getSyscallAtPath,
 	unix.SYS_READLINK:   getSyscallArg1Path,
 	unix.SYS_READLINKAT: getSyscallAtPath,
-	unix.SYS_STATFS:     getSyscallArg1Path,
-	unix.SYS_STATX:      getSyscallAtPath,
-	unix.SYS_UNLINK:     getSyscallArg1Path,
-	unix.SYS_UNLINKAT:   getSyscallAtPath,
-	unix.SYS_UTIMENSAT:  getSyscallAtPath,
+	unix.SYS_RENAME: func(pid int, scParms *syscallParms) ([]string, error) {
+		path1, err := getSyscallArgPath(pid, scParms.arg1)
+		if err != nil {
+			return nil, err
+		}
+		path2, err := getSyscallArgPath(pid, scParms.arg1)
+		if err != nil {
+			return nil, err
+		}
+		return []string{path1, path2}, nil
+	},
+	unix.SYS_STATFS:    getSyscallArg1Path,
+	unix.SYS_STATX:     getSyscallAtPath,
+	unix.SYS_UNLINK:    getSyscallArg1Path,
+	unix.SYS_UNLINKAT:  getSyscallAtPath,
+	unix.SYS_UTIMENSAT: getSyscallAtPath,
 }
 
 // ExitError reports an unsuccessful exit by a command.
@@ -357,19 +368,6 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 			fmt.Printf("  Stopped\n")
 			switch stopSignal := waitStatus.StopSignal(); stopSignal {
 			case unix.SIGTRAP | 0x80:
-				fmt.Printf("    SIGTRAP | 0x80\n")
-				switch tc := waitStatus.TrapCause(); tc {
-				case unix.PTRACE_EVENT_EXEC, unix.PTRACE_EVENT_CLONE, unix.PTRACE_EVENT_FORK, unix.PTRACE_EVENT_VFORK:
-					fmt.Printf("      PTRACE_EVENT_EXEC, PTRACE_EVENT_CLONE, PTRACE_EVENT_FORK, PTRACE_EVENT_VFORK\n")
-					msgPid, err := unix.PtraceGetEventMsg(pid)
-					if err != nil {
-						return nil, err
-					}
-					fmt.Printf("       msgPid: %d\n", msgPid)
-				default:
-					fmt.Printf("      TrapCause: %d\n", tc)
-				}
-
 				var ptraceRegs unix.PtraceRegs
 				err = unix.PtraceGetRegs(pid, &ptraceRegs)
 				if err != nil {
@@ -386,13 +384,15 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 					fmt.Printf("        %#v\n", syscallParms)
 					if _, ok := ignoreSyscallsMap[syscallParms.syscall]; !ok {
 						if fn, ok := fileSyscallFnMap[syscallParms.syscall]; ok {
-							file, err := fn(pid, syscallParms)
+							files, err := fn(pid, syscallParms)
 							if err != nil {
 								return nil, err
 							}
-							if len(file) > 0 {
-								fmt.Printf("        file: %s\n", file)
-								fileMap[file] = true
+							for _, file := range files {
+								if len(file) > 0 {
+									fmt.Printf("        file: %s\n", file)
+									fileMap[file] = true
+								}
 							}
 						} else {
 							syscallName, ok := syscallToNameMap[syscallParms.syscall]
