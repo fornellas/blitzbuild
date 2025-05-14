@@ -272,19 +272,6 @@ func NewCmdPtraceFile(
 	}, nil
 }
 
-func ptraceSetOptions(pid int) error {
-	return unix.PtraceSetOptions(
-		pid,
-		unix.PTRACE_O_TRACEEXEC|
-			// unix.PTRACE_O_TRACESECCOMP|
-			unix.PTRACE_O_TRACESYSGOOD|
-			unix.PTRACE_O_EXITKILL|
-			unix.PTRACE_O_TRACECLONE|
-			unix.PTRACE_O_TRACEFORK|
-			unix.PTRACE_O_TRACEVFORK,
-	)
-}
-
 // Run executes the command and traces files it interacted with using ptrace(2). On success, it
 // returns a map of such files. On unsuccessful exit, it returns ExitError; it may also return other
 // related errors.
@@ -307,135 +294,97 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	pid := cmd.Process.Pid
-	fmt.Printf("pid: %d\n", pid)
 
 	// https://github.com/u-root/u-root/blob/eadd8c6fee2e915e8f331b1c532be4ac98ba2a05/pkg/strace/tracer.go#L185
 	var waitStatus unix.WaitStatus
-	_, err := unix.Wait4(pid, &waitStatus, 0, nil)
+	_, err := unix.Wait4(cmd.Process.Pid, &waitStatus, 0, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := ptraceSetOptions(pid); err != nil {
+	if err := unix.PtraceSetOptions(
+		cmd.Process.Pid,
+		unix.PTRACE_O_TRACEEXEC|
+			unix.PTRACE_O_TRACESYSGOOD|
+			unix.PTRACE_O_EXITKILL|
+			unix.PTRACE_O_TRACECLONE|
+			unix.PTRACE_O_TRACEFORK|
+			unix.PTRACE_O_TRACEVFORK,
+	); err != nil {
 		return nil, err
 	}
 
-	if err := unix.PtraceSyscall(pid, 0); err != nil {
+	if err := unix.PtraceSyscall(cmd.Process.Pid, 0); err != nil {
 		return nil, err
 	}
 
 	fileMap := map[string]bool{}
 	for {
-		fmt.Printf("loop\n")
-		wpid, err := unix.Wait4(-1, &waitStatus, 0, nil)
+		pid, err := unix.Wait4(-1, &waitStatus, 0, nil)
 		if err != nil {
+			// TODO do we need this?
+			// if err == unix.ECHILD {
+			// 	return fileMap, nil
+			// }
 			return nil, err
 		}
-		if wpid == pid {
-			fmt.Printf("  wpid: %d (parent)\n", wpid)
-		} else {
-			fmt.Printf("  wpid: %d (child)\n", wpid)
-		}
-		if wpid < 0 {
-			return nil, fmt.Errorf("syscall.Wait4 returned wpid < 0: %d", wpid)
-		}
 
+		var injectSignal unix.Signal
 		if waitStatus.Exited() {
-			fmt.Printf("  Exitted\n")
-			if wpid == pid {
+			if pid == cmd.Process.Pid {
 				if waitStatus.ExitStatus() != 0 {
-					fmt.Printf("    ExitStatus != 0\n")
 					return nil, &ExitError{WaitStatus: &waitStatus}
 				}
-				fmt.Printf("  DONE!\n")
 				return fileMap, nil
-			} else {
-				continue
 			}
+			continue
+		} else if waitStatus.Signaled() {
+			continue
 		} else if waitStatus.Stopped() {
-			// FIXME this logic should properly cater for children
-			signal := waitStatus.StopSignal()
-			fmt.Printf("  Stopped (signal %s)\n", signal)
 			switch signal := waitStatus.StopSignal(); signal {
 			case unix.SIGTRAP | 0x80:
-				fmt.Printf("    Trace\n")
-			case unix.SIGTRAP:
-				fmt.Printf("      SIGTRAP\n")
-				switch tc := waitStatus.TrapCause(); tc {
-				// case unix.PTRACE_EVENT_EXEC:
-				// 	fmt.Printf("        PTRACE_EVENT_EXEC\n")
-				// 	formerThreadId, err := unix.PtraceGetEventMsg(wpid)
-				// 	if err != nil {
-				// 		return nil, err
-				// 	}
-				// 	fmt.Printf("          formerThreadId %d\n", formerThreadId)
+				var ptraceRegs unix.PtraceRegs
+				err = unix.PtraceGetRegs(pid, &ptraceRegs)
+				if err != nil {
+					return nil, err
+				}
 
+				syscallParms := newSyscallParms(&ptraceRegs)
+				if _, ok := ignoreSyscallsMap[syscallParms.syscall]; !ok {
+					if fn, ok := fileSyscallFnMap[syscallParms.syscall]; ok {
+						file, err := fn(pid, syscallParms)
+						if err != nil {
+							return nil, err
+						}
+						fileMap[file] = true
+					} else {
+						syscallName, ok := syscallToNameMap[syscallParms.syscall]
+						if !ok {
+							syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
+						}
+						return nil, fmt.Errorf("Unknown syscall: %s: %#v", syscallName, syscallParms)
+					}
+				}
+			case unix.SIGSTOP:
+				fallthrough
+			case unix.SIGTSTP, unix.SIGTTOU, unix.SIGTTIN:
+				injectSignal = signal
+			case unix.SIGTRAP:
+				switch tc := waitStatus.TrapCause(); tc {
 				case unix.PTRACE_EVENT_CLONE, unix.PTRACE_EVENT_FORK, unix.PTRACE_EVENT_VFORK:
-					fmt.Printf("        Child\n")
-					childPid, err := unix.PtraceGetEventMsg(wpid)
+					_, err := unix.PtraceGetEventMsg(pid)
 					if err != nil {
 						return nil, err
 					}
-					fmt.Printf("          PID %d\n", childPid)
-					if err := ptraceSetOptions(int(childPid)); err != nil {
-						return nil, err
-					}
 				default:
-					fmt.Printf("      PtraceCont %d %s\n", wpid, signal)
-					if err = unix.PtraceCont(wpid, int(signal)); err != nil {
-						return nil, err
-					}
-					continue
+					injectSignal = signal
 				}
-			case unix.SIGSTOP:
-				fmt.Printf("      SIGSTOP\n")
-
 			default:
-				fmt.Printf("      PtraceCont %d %s\n", wpid, signal)
-				if err = unix.PtraceCont(wpid, int(signal)); err != nil {
-					return nil, err
-				}
-				continue
-			}
-		} else {
-			return nil, &ExitError{WaitStatus: &waitStatus}
-		}
-
-		var ptraceRegs unix.PtraceRegs
-		err = unix.PtraceGetRegs(wpid, &ptraceRegs)
-		if err != nil {
-			fmt.Printf("PtraceGetRegs\n")
-			return nil, err
-		}
-
-		syscallParms := newSyscallParms(&ptraceRegs)
-
-		syscallName, ok := syscallToNameMap[syscallParms.syscall]
-		if !ok {
-			syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
-		}
-		fmt.Printf("  %s\n", syscallName)
-
-		if _, ok := ignoreSyscallsMap[syscallParms.syscall]; !ok {
-			if fn, ok := fileSyscallFnMap[syscallParms.syscall]; ok {
-				file, err := fn(wpid, syscallParms)
-				if err != nil {
-					fmt.Printf("fn\n")
-					return nil, err
-				}
-				fileMap[file] = true
-			} else {
-				syscallName, ok := syscallToNameMap[syscallParms.syscall]
-				if !ok {
-					syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
-				}
-				return nil, fmt.Errorf("Unknown syscall: %s: %#v", syscallName, syscallParms)
+				injectSignal = signal
 			}
 		}
 
-		err = unix.PtraceSyscall(wpid, 0)
-		if err != nil {
+		if err := unix.PtraceSyscall(pid, int(injectSignal)); err != nil {
 			return nil, err
 		}
 	}
