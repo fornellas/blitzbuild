@@ -35,8 +35,8 @@ type syscallParms struct {
 
 // these syscalls don't relate to filesystem, so we can ignore them.
 var ignoreSyscallsMap = map[uint64]bool{
-	unix.SYS_ACCEPT:            true,
 	unix.SYS_ACCEPT4:           true,
+	unix.SYS_ACCEPT:            true,
 	unix.SYS_ADJTIMEX:          true,
 	unix.SYS_ALARM:             true,
 	unix.SYS_BIND:              true,
@@ -195,13 +195,13 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_TIMER_GETTIME:     true,
 	unix.SYS_TIMER_SETTIME:     true,
 	unix.SYS_TIMES:             true,
+	unix.SYS_UMASK:             true,
 	unix.SYS_UNAME:             true,
 	unix.SYS_VFORK:             true,
 	unix.SYS_WAIT4:             true,
 	unix.SYS_WAITID:            true,
 	unix.SYS_WRITE:             true,
 	unix.SYS_WRITEV:            true,
-	unix.SYS_UMASK:             true,
 }
 
 func getSyscallArgPath(pid int, arg uint64) (string, error) {
@@ -310,11 +310,100 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 			filepath.Clean(path2),
 		}, nil
 	},
-	// unix.SYS_RENAMEAT: ,
+	unix.SYS_RENAMEAT: func(pid int, scParms *syscallParms) ([]string, error) {
+		olddirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
+		oldpath, err := getSyscallArgPath(pid, scParms.arg2)
+		if err != nil {
+			return nil, err
+		}
+
+		newdirfd := *(*int32)(unsafe.Pointer(&scParms.arg3))
+		newpath, err := getSyscallArgPath(pid, scParms.arg4)
+		if err != nil {
+			return nil, err
+		}
+
+		if !filepath.IsAbs(oldpath) {
+			if olddirfd == unix.AT_FDCWD {
+				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+				if err != nil {
+					return nil, err
+				}
+				oldpath = filepath.Join(cwd, oldpath)
+			} else {
+				dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, olddirfd))
+				if err != nil {
+					return nil, err
+				}
+				oldpath = filepath.Join(dirfdPath, oldpath)
+			}
+		}
+
+		if !filepath.IsAbs(newpath) {
+			if newdirfd == unix.AT_FDCWD {
+				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+				if err != nil {
+					return nil, err
+				}
+				newpath = filepath.Join(cwd, newpath)
+			} else {
+				dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, newdirfd))
+				if err != nil {
+					return nil, err
+				}
+				newpath = filepath.Join(dirfdPath, newpath)
+			}
+		}
+
+		return []string{
+			filepath.Clean(oldpath),
+			filepath.Clean(newpath),
+		}, nil
+	},
 	unix.SYS_STATFS: getSyscallPath,
 	unix.SYS_STAT:   getSyscallPath,
 	unix.SYS_STATX:  getSyscallDirfdPath,
-	// unix.SYS_SYMLINKAT: ,
+	unix.SYS_SYMLINKAT: func(pid int, scParms *syscallParms) ([]string, error) {
+		target, err := getSyscallArgPath(pid, scParms.arg1)
+		if err != nil {
+			return nil, err
+		}
+		if !filepath.IsAbs(target) {
+			cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+			if err != nil {
+				return nil, err
+			}
+			target = filepath.Join(cwd, target)
+		}
+
+		newdirfd := *(*int32)(unsafe.Pointer(&scParms.arg2))
+
+		linkpath, err := getSyscallArgPath(pid, scParms.arg3)
+		if err != nil {
+			return nil, err
+		}
+
+		if !filepath.IsAbs(linkpath) {
+			if newdirfd == unix.AT_FDCWD {
+				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+				if err != nil {
+					return nil, err
+				}
+				linkpath = filepath.Join(cwd, linkpath)
+			} else {
+				dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, newdirfd))
+				if err != nil {
+					return nil, err
+				}
+				linkpath = filepath.Join(dirfdPath, linkpath)
+			}
+		}
+
+		return []string{
+			filepath.Clean(target),
+			filepath.Clean(linkpath),
+		}, nil
+	},
 	unix.SYS_UNLINK:    getSyscallPath,
 	unix.SYS_UNLINKAT:  getSyscallDirfdPath,
 	unix.SYS_UTIMENSAT: getSyscallDirfdPath,
@@ -542,6 +631,7 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 							if !ok {
 								syscallName = fmt.Sprintf("(%d)", syscallParms.syscall)
 							}
+							// fmt.Printf("Unknown syscall: %s: %#v\n", syscallName, syscallParms)
 							return nil, fmt.Errorf("Unknown syscall: %s: %#v", syscallName, syscallParms)
 						}
 					}
