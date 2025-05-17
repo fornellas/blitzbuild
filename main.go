@@ -21,11 +21,14 @@ func main() {
 	cmd, err := cmdPkg.NewCmdPtraceFile(name, args, nil, "")
 	if err != nil {
 		fmt.Printf("NewCmdPtraceFile: %T: %s\n", err, err)
+		os.Exit(1)
 	}
+
 	ctx := context.Background()
 	fileMap, err := cmd.Run(ctx)
 	if err != nil {
 		fmt.Printf("CmdPtraceFile.Run: %T: %s\n", err, err)
+		os.Exit(1)
 	}
 
 	files := make([]string, len(fileMap))
