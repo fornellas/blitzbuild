@@ -209,8 +209,6 @@ func getSyscallArgPath(pid int, arg uint64) (string, error) {
 		return "", nil
 	}
 	var path [unix.PathMax]byte
-	// FIXME do heuristics here to try to read PathMax, and if error, still work with count,
-	// if \0 found, then success, else, failure. Should speed up things
 	for i := range unix.PathMax {
 		buff := [1]byte{}
 		count, err := unix.PtracePeekText(pid, uintptr(arg+uint64(i)), buff[:])
@@ -233,7 +231,14 @@ func getSyscallPath(pid int, scParms *syscallParms) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []string{path}, nil
+	if !filepath.IsAbs(path) {
+		cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.Join(cwd, path)
+	}
+	return []string{filepath.Clean(path)}, nil
 }
 
 func getSyscallDirfdPath(pid int, scParms *syscallParms) ([]string, error) {
@@ -282,11 +287,28 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 		if err != nil {
 			return nil, err
 		}
+		if !filepath.IsAbs(path1) {
+			cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+			if err != nil {
+				return nil, err
+			}
+			path1 = filepath.Join(cwd, path1)
+		}
 		path2, err := getSyscallArgPath(pid, scParms.arg1)
 		if err != nil {
 			return nil, err
 		}
-		return []string{path1, path2}, nil
+		if !filepath.IsAbs(path1) {
+			cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+			if err != nil {
+				return nil, err
+			}
+			path2 = filepath.Join(cwd, path2)
+		}
+		return []string{
+			filepath.Clean(path1),
+			filepath.Clean(path2),
+		}, nil
 	},
 	// unix.SYS_RENAMEAT: ,
 	unix.SYS_STATFS: getSyscallPath,
