@@ -33,6 +33,219 @@ type syscallParms struct {
 	error   uint64
 }
 
+// TBD syscalls:
+// USELIB
+// PERSONALITY
+// USTAT
+// STATFS
+// FSTATFS
+// SYSFS
+// GETPRIORITY
+// SETPRIORITY
+// SCHED_SETPARAM
+// SCHED_GETPARAM
+// SCHED_SETSCHEDULER
+// SCHED_GETSCHEDULER
+// SCHED_GET_PRIORITY_MAX
+// SCHED_GET_PRIORITY_MIN
+// SCHED_RR_GET_INTERVAL
+// MLOCK
+// MUNLOCK
+// MLOCKALL
+// MUNLOCKALL
+// VHANGUP
+// MODIFY_LDT
+// PIVOT_ROOT
+// _SYSCTL
+// PRCTL
+// ARCH_PRCTL
+// CHROOT
+// SYNC
+// ACCT
+// MOUNT
+// UMOUNT2
+// SWAPON
+// SWAPOFF
+// REBOOT
+// SETHOSTNAME
+// SETDOMAINNAME
+// IOPL
+// IOPERM
+// CREATE_MODULE
+// INIT_MODULE
+// DELETE_MODULE
+// GET_KERNEL_SYMS
+// QUERY_MODULE
+// QUOTACTL
+// NFSSERVCTL
+// GETPMSG
+// PUTPMSG
+// AFS_SYSCALL
+// TUXCALL
+// SECURITY
+// GETTID
+// READAHEAD
+// SETXATTR
+// LSETXATTR
+// FSETXATTR
+// GETXATTR
+// LGETXATTR
+// FGETXATTR
+// LISTXATTR
+// LLISTXATTR
+// FLISTXATTR
+// REMOVEXATTR
+// LREMOVEXATTR
+// FREMOVEXATTR
+// TKILL
+// SET_THREAD_AREA
+// IO_SETUP
+// IO_DESTROY
+// IO_GETEVENTS
+// IO_SUBMIT
+// IO_CANCEL
+// GET_THREAD_AREA
+// LOOKUP_DCOOKIE
+// REMAP_FILE_PAGES
+// GETDENTS64
+// SET_TID_ADDRESS
+// RESTART_SYSCALL
+// SEMTIMEDOP
+// FADVISE64
+// TGKILL
+// UTIMES
+// VSERVER
+// MBIND
+// SET_MEMPOLICY
+// GET_MEMPOLICY
+// MQ_OPEN
+// MQ_UNLINK
+// MQ_TIMEDSEND
+// MQ_TIMEDRECEIVE
+// MQ_NOTIFY
+// MQ_GETSETATTR
+// KEXEC_LOAD
+// WAITID
+// ADD_KEY
+// REQUEST_KEY
+// KEYCTL
+// IOPRIO_SET
+// IOPRIO_GET
+// INOTIFY_INIT
+// INOTIFY_ADD_WATCH
+// INOTIFY_RM_WATCH
+// MIGRATE_PAGES
+// OPENAT
+// MKDIRAT
+// MKNODAT
+// FCHOWNAT
+// FUTIMESAT
+// NEWFSTATAT
+// UNLINKAT
+// RENAMEAT
+// LINKAT
+// SYMLINKAT
+// READLINKAT
+// FCHMODAT
+// FACCESSAT
+// PSELECT6
+// PPOLL
+// UNSHARE
+// SET_ROBUST_LIST
+// GET_ROBUST_LIST
+// SPLICE
+// TEE
+// SYNC_FILE_RANGE
+// VMSPLICE
+// MOVE_PAGES
+// UTIMENSAT
+// SIGNALFD
+// TIMERFD_CREATE
+// EVENTFD
+// FALLOCATE
+// TIMERFD_SETTIME
+// TIMERFD_GETTIME
+// ACCEPT4
+// SIGNALFD4
+// EVENTFD2
+// INOTIFY_INIT1
+// PREADV
+// PWRITEV
+// RT_TGSIGQUEUEINFO
+// PERF_EVENT_OPEN
+// RECVMMSG
+// FANOTIFY_INIT
+// FANOTIFY_MARK
+// PRLIMIT64
+// NAME_TO_HANDLE_AT
+// OPEN_BY_HANDLE_AT
+// SYNCFS
+// SENDMMSG
+// SETNS
+// GETCPU
+// PROCESS_VM_READV
+// PROCESS_VM_WRITEV
+// KCMP
+// FINIT_MODULE
+// SCHED_SETATTR
+// SCHED_GETATTR
+// RENAMEAT2
+// SECCOMP
+// GETRANDOM
+// MEMFD_CREATE
+// KEXEC_FILE_LOAD
+// EXECVEAT
+// USERFAULTFD
+// MEMBARRIER
+// MLOCK2
+// COPY_FILE_RANGE
+// PREADV2
+// PWRITEV2
+// PKEY_MPROTECT
+// PKEY_ALLOC
+// PKEY_FREE
+// STATX
+// IO_PGETEVENTS
+// RSEQ
+// URETPROBE
+// PIDFD_SEND_SIGNAL
+// IO_URING_SETUP
+// IO_URING_ENTER
+// IO_URING_REGISTER
+// OPEN_TREE
+// MOVE_MOUNT
+// FSOPEN
+// FSCONFIG
+// FSMOUNT
+// FSPICK
+// PIDFD_OPEN
+// CLOSE_RANGE
+// OPENAT2
+// PIDFD_GETFD
+// FACCESSAT2
+// PROCESS_MADVISE
+// MOUNT_SETATTR
+// QUOTACTL_FD
+// LANDLOCK_CREATE_RULESET
+// LANDLOCK_ADD_RULE
+// LANDLOCK_RESTRICT_SELF
+// MEMFD_SECRET
+// PROCESS_MRELEASE
+// SET_MEMPOLICY_HOME_NODE
+// CACHESTAT
+// FCHMODAT2
+// MAP_SHADOW_STACK
+// STATMOUNT
+// LISTMOUNT
+// LSM_GET_SELF_ATTR
+// LSM_SET_SELF_ATTR
+// LSM_LIST_MODULES
+// MSEAL
+// SETXATTRAT
+// GETXATTRAT
+// LISTXATTRAT
+// REMOVEXATTRAT
+
 // these syscalls don't relate to filesystem, so we can ignore them.
 var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_ACCEPT4:           true,
@@ -324,13 +537,18 @@ func getSyscallPathPath(pid int, scParms *syscallParms) ([]string, error) {
 // fileSyscallFnMap maps filesystem related syscalls to functions that extract the file path from
 // it.
 var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
-	unix.SYS_CHDIR:      getSyscallPath,
-	unix.SYS_CHMOD:      getSyscallPath,
+	// unix.SYS_ACCESS: ,
+	unix.SYS_CHDIR: getSyscallPath,
+	unix.SYS_CHMOD: getSyscallPath,
+	// unix.SYS_CHOWN: ,
+	// unix.SYS_CREAT: ,
 	unix.SYS_EXECVE:     getSyscallPath,
 	unix.SYS_FACCESSAT2: getSyscallDirfdPath,
 	unix.SYS_FCHMODAT:   getSyscallDirfdPath,
 	unix.SYS_FCHOWNAT:   getSyscallDirfdPath,
-	unix.SYS_FTRUNCATE:  getSyscallPath,
+	// unix.SYS_FSTAT: ,
+	unix.SYS_FTRUNCATE: getSyscallPath,
+	// unix.SYS_LCHOWN: ,
 	unix.SYS_LINK:       getSyscallPathPath,
 	unix.SYS_LSTAT:      getSyscallPath,
 	unix.SYS_MKDIR:      getSyscallPath,
@@ -398,8 +616,8 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 		return paths, nil
 	},
 	unix.SYS_RMDIR:   getSyscallPath,
-	unix.SYS_STATFS:  getSyscallPath,
 	unix.SYS_STAT:    getSyscallPath,
+	unix.SYS_STATFS:  getSyscallPath,
 	unix.SYS_STATX:   getSyscallDirfdPath,
 	unix.SYS_SYMLINK: getSyscallPathPath,
 	unix.SYS_SYMLINKAT: func(pid int, scParms *syscallParms) ([]string, error) {
@@ -446,8 +664,11 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 
 		return paths, nil
 	},
-	unix.SYS_UNLINK:    getSyscallPath,
-	unix.SYS_UNLINKAT:  getSyscallDirfdPath,
+	// unix.SYS_TRUNCATE: ,
+	// unix.SYS_UMASK: ,
+	unix.SYS_UNLINK:   getSyscallPath,
+	unix.SYS_UNLINKAT: getSyscallDirfdPath,
+	// unix.SYS_UTIME: ,
 	unix.SYS_UTIMENSAT: getSyscallDirfdPath,
 }
 
