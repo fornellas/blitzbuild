@@ -2,15 +2,34 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"syscall"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	cachePkg "github.com/fornellas/blitzbuild/pkg/cache"
 	cmdPkg "github.com/fornellas/blitzbuild/pkg/cmd"
+	"github.com/fornellas/blitzbuild/pkg/proc"
 	"github.com/fornellas/resonance/log"
 	"github.com/spf13/cobra"
 )
+
+var ignoreFsTypes []string
+var defaultIgnoreFsTypes = []string{
+	"devpts",
+	"devtmpfs",
+	"proc",
+	"sysfs",
+	"tmpfs",
+}
+
+var ignorePatterns []string
+var defaultIgnorePatterns = []string{
+	"**/.cache/**",
+	"/home/fornellas/.cache/go-build/*",
+}
 
 var RunCmd = &cobra.Command{
 	Use:   "run [FLAGS] -- CMD [ARGS]",
@@ -94,9 +113,46 @@ var RunCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		patterns := ignorePatterns
+
+		logger.Info("Loading mounts")
+		mounts, err := proc.LoadMounts()
+		if err != nil {
+			logger.Error("failed to load mounts", "err", err)
+			os.Exit(1)
+		}
+		ignoreFsTypesMap := map[string]bool{}
+		for _, fsType := range ignoreFsTypes {
+			ignoreFsTypesMap[fsType] = true
+		}
+		for _, mount := range mounts {
+			if _, ok := ignoreFsTypesMap[mount.FSType]; ok {
+				patterns = append(patterns, mount.MountPoint)
+			}
+		}
+		for _, pattern := range patterns {
+			fmt.Printf("pattern: %#v\n", pattern)
+		}
+
 		logger.Info("Stat files for caching")
 		value = map[string]time.Time{}
 		for path := range fileMap {
+			ignore := false
+			for _, pattern := range patterns {
+				matched, err := doublestar.PathMatch(pattern, path)
+				if err != nil {
+					logger.Error("failed to match", "err", err)
+					os.Exit(1)
+				}
+				if matched {
+					ignore = true
+					break
+				}
+			}
+			if ignore {
+				continue
+			}
+
 			var tim time.Time
 			var stat_t syscall.Stat_t
 			err := syscall.Stat(path, &stat_t)
@@ -131,5 +187,18 @@ var RunCmd = &cobra.Command{
 }
 
 func init() {
+	RunCmd.Flags().StringSliceVar(
+		&ignoreFsTypes, "ignore-fstypes", defaultIgnoreFsTypes,
+		"filesystem types to ignore",
+	)
+
+	RunCmd.Flags().StringSliceVar(
+		&ignorePatterns, "ignore-patterns", defaultIgnorePatterns,
+		"file patterns to ignore",
+	)
+	if err := RunCmd.MarkFlagFilename("ignore-patterns"); err != nil {
+		panic(err)
+	}
+
 	RootCmd.AddCommand(RunCmd)
 }
