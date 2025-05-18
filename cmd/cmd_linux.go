@@ -100,6 +100,7 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_GETPGRP:           true,
 	unix.SYS_GETPID:            true,
 	unix.SYS_GETPPID:           true,
+	unix.SYS_GETPRIORITY:       true,
 	unix.SYS_GETRANDOM:         true,
 	unix.SYS_GETRESGID:         true,
 	unix.SYS_GETRESUID:         true,
@@ -112,10 +113,15 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_GETTIMEOFDAY:      true,
 	unix.SYS_GETUID:            true,
 	unix.SYS_IOCTL:             true,
+	unix.SYS_IO_URING_ENTER:    true,
+	unix.SYS_IO_URING_REGISTER: true,
+	unix.SYS_IO_URING_SETUP:    true,
 	unix.SYS_KILL:              true,
 	unix.SYS_LISTEN:            true,
 	unix.SYS_LSEEK:             true,
 	unix.SYS_MADVISE:           true,
+	unix.SYS_MBIND:             true,
+	unix.SYS_MEMBARRIER:        true,
 	unix.SYS_MINCORE:           true,
 	unix.SYS_MMAP:              true,
 	unix.SYS_MPROTECT:          true,
@@ -133,8 +139,10 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_PIPE2:             true,
 	unix.SYS_PIPE:              true,
 	unix.SYS_POLL:              true,
+	unix.SYS_PRCTL:             true,
 	unix.SYS_PREAD64:           true,
 	unix.SYS_PRLIMIT64:         true,
+	unix.SYS_PSELECT6:          true,
 	unix.SYS_PTRACE:            true,
 	unix.SYS_PWRITE64:          true,
 	unix.SYS_READ:              true,
@@ -158,6 +166,7 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_SEMGET:            true,
 	unix.SYS_SEMOP:             true,
 	unix.SYS_SENDFILE:          true,
+	unix.SYS_SENDMMSG:          true,
 	unix.SYS_SENDMSG:           true,
 	unix.SYS_SENDTO:            true,
 	unix.SYS_SETFSGID:          true,
@@ -166,6 +175,7 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_SETGROUPS:         true,
 	unix.SYS_SETITIMER:         true,
 	unix.SYS_SETPGID:           true,
+	unix.SYS_SETPRIORITY:       true,
 	unix.SYS_SETREGID:          true,
 	unix.SYS_SETRESGID:         true,
 	unix.SYS_SETRESUID:         true,
@@ -183,6 +193,8 @@ var ignoreSyscallsMap = map[uint64]bool{
 	unix.SYS_SHMGET:            true,
 	unix.SYS_SHUTDOWN:          true,
 	unix.SYS_SIGALTSTACK:       true,
+	unix.SYS_SIGNALFD4:         true,
+	unix.SYS_SIGNALFD:          true,
 	unix.SYS_SOCKET:            true,
 	unix.SYS_SOCKETPAIR:        true,
 	unix.SYS_SYSINFO:           true,
@@ -265,15 +277,47 @@ func getSyscallDirfdPath(pid int, scParms *syscallParms) ([]string, error) {
 	return []string{filepath.Clean(path)}, nil
 }
 
+func getSyscallPathPath(pid int, scParms *syscallParms) ([]string, error) {
+	path1, err := getSyscallArgPath(pid, scParms.arg1)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsAbs(path1) {
+		cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+		if err != nil {
+			return nil, err
+		}
+		path1 = filepath.Join(cwd, path1)
+	}
+	path2, err := getSyscallArgPath(pid, scParms.arg2)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsAbs(path1) {
+		cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+		if err != nil {
+			return nil, err
+		}
+		path2 = filepath.Join(cwd, path2)
+	}
+	return []string{
+		filepath.Clean(path1),
+		filepath.Clean(path2),
+	}, nil
+}
+
 // fileSyscallFnMap maps filesystem related syscalls to functions that extract the file path from
 // it.
 var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 	unix.SYS_CHDIR:      getSyscallPath,
+	unix.SYS_CHMOD:      getSyscallPath,
 	unix.SYS_EXECVE:     getSyscallPath,
 	unix.SYS_FACCESSAT2: getSyscallDirfdPath,
 	unix.SYS_FCHMODAT:   getSyscallDirfdPath,
 	unix.SYS_FCHOWNAT:   getSyscallDirfdPath,
 	unix.SYS_FTRUNCATE:  getSyscallPath,
+	unix.SYS_LINK:       getSyscallPathPath,
+	unix.SYS_LSTAT:      getSyscallPath,
 	unix.SYS_MKDIR:      getSyscallPath,
 	unix.SYS_MKDIRAT:    getSyscallDirfdPath,
 	unix.SYS_MKNODAT:    getSyscallDirfdPath,
@@ -282,34 +326,7 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 	unix.SYS_OPENAT:     getSyscallDirfdPath,
 	unix.SYS_READLINK:   getSyscallPath,
 	unix.SYS_READLINKAT: getSyscallDirfdPath,
-	unix.SYS_RENAME: func(pid int, scParms *syscallParms) ([]string, error) {
-		path1, err := getSyscallArgPath(pid, scParms.arg1)
-		if err != nil {
-			return nil, err
-		}
-		if !filepath.IsAbs(path1) {
-			cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
-			if err != nil {
-				return nil, err
-			}
-			path1 = filepath.Join(cwd, path1)
-		}
-		path2, err := getSyscallArgPath(pid, scParms.arg1)
-		if err != nil {
-			return nil, err
-		}
-		if !filepath.IsAbs(path1) {
-			cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
-			if err != nil {
-				return nil, err
-			}
-			path2 = filepath.Join(cwd, path2)
-		}
-		return []string{
-			filepath.Clean(path1),
-			filepath.Clean(path2),
-		}, nil
-	},
+	unix.SYS_RENAME:     getSyscallPathPath,
 	unix.SYS_RENAMEAT: func(pid int, scParms *syscallParms) ([]string, error) {
 		olddirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
 		oldpath, err := getSyscallArgPath(pid, scParms.arg2)
@@ -360,9 +377,11 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 			filepath.Clean(newpath),
 		}, nil
 	},
-	unix.SYS_STATFS: getSyscallPath,
-	unix.SYS_STAT:   getSyscallPath,
-	unix.SYS_STATX:  getSyscallDirfdPath,
+	unix.SYS_RMDIR:   getSyscallPath,
+	unix.SYS_STATFS:  getSyscallPath,
+	unix.SYS_STAT:    getSyscallPath,
+	unix.SYS_STATX:   getSyscallDirfdPath,
+	unix.SYS_SYMLINK: getSyscallPathPath,
 	unix.SYS_SYMLINKAT: func(pid int, scParms *syscallParms) ([]string, error) {
 		target, err := getSyscallArgPath(pid, scParms.arg1)
 		if err != nil {
