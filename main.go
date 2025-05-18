@@ -6,7 +6,7 @@ import (
 	"os"
 	"sort"
 
-	cmdPkg "github.com/fornellas/blitzbuild/cmd"
+	cmdPkg "github.com/fornellas/blitzbuild/pkg/cmd"
 )
 
 func main() {
