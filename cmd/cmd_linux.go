@@ -253,6 +253,18 @@ func getSyscallPath(pid int, scParms *syscallParms) ([]string, error) {
 	return []string{filepath.Clean(path)}, nil
 }
 
+func getDirfdPath(pid int, dirfd int32, path string) (string, bool, error) {
+	dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
+	if err != nil {
+		return "", false, err
+	}
+	if strings.HasPrefix(dirfdPath, "pipe:") {
+		return "", false, nil
+	}
+	path = filepath.Clean(filepath.Join(dirfdPath, path))
+	return path, true, nil
+}
+
 func getSyscallDirfdPath(pid int, scParms *syscallParms) ([]string, error) {
 	path, err := getSyscallArgPath(pid, scParms.arg2)
 	if err != nil {
@@ -267,11 +279,14 @@ func getSyscallDirfdPath(pid int, scParms *syscallParms) ([]string, error) {
 			}
 			path = filepath.Join(cwd, path)
 		} else {
-			dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, dirfd))
+			var ok bool
+			path, ok, err = getDirfdPath(pid, dirfd, path)
 			if err != nil {
 				return nil, err
 			}
-			path = filepath.Join(dirfdPath, path)
+			if !ok {
+				return nil, nil
+			}
 		}
 	}
 	return []string{filepath.Clean(path)}, nil
@@ -328,10 +343,31 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 	unix.SYS_READLINKAT: getSyscallDirfdPath,
 	unix.SYS_RENAME:     getSyscallPathPath,
 	unix.SYS_RENAMEAT: func(pid int, scParms *syscallParms) ([]string, error) {
+		paths := []string{}
+
 		olddirfd := *(*int32)(unsafe.Pointer(&scParms.arg1))
 		oldpath, err := getSyscallArgPath(pid, scParms.arg2)
 		if err != nil {
 			return nil, err
+		}
+		if !filepath.IsAbs(oldpath) {
+			if olddirfd == unix.AT_FDCWD {
+				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+				if err != nil {
+					return nil, err
+				}
+				paths = append(paths, filepath.Clean(filepath.Join(cwd, oldpath)))
+			} else {
+				path, ok, err := getDirfdPath(pid, olddirfd, oldpath)
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					paths = append(paths, path)
+				}
+			}
+		} else {
+			paths = append(paths, filepath.Clean(oldpath))
 		}
 
 		newdirfd := *(*int32)(unsafe.Pointer(&scParms.arg3))
@@ -339,43 +375,27 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 		if err != nil {
 			return nil, err
 		}
-
-		if !filepath.IsAbs(oldpath) {
-			if olddirfd == unix.AT_FDCWD {
-				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
-				if err != nil {
-					return nil, err
-				}
-				oldpath = filepath.Join(cwd, oldpath)
-			} else {
-				dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, olddirfd))
-				if err != nil {
-					return nil, err
-				}
-				oldpath = filepath.Join(dirfdPath, oldpath)
-			}
-		}
-
 		if !filepath.IsAbs(newpath) {
 			if newdirfd == unix.AT_FDCWD {
 				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
 				if err != nil {
 					return nil, err
 				}
-				newpath = filepath.Join(cwd, newpath)
+				paths = append(paths, filepath.Clean(filepath.Join(cwd, newpath)))
 			} else {
-				dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, newdirfd))
+				path, ok, err := getDirfdPath(pid, newdirfd, newpath)
 				if err != nil {
 					return nil, err
 				}
-				newpath = filepath.Join(dirfdPath, newpath)
+				if ok {
+					paths = append(paths, path)
+				}
 			}
+		} else {
+			paths = append(paths, filepath.Clean(newpath))
 		}
 
-		return []string{
-			filepath.Clean(oldpath),
-			filepath.Clean(newpath),
-		}, nil
+		return paths, nil
 	},
 	unix.SYS_RMDIR:   getSyscallPath,
 	unix.SYS_STATFS:  getSyscallPath,
@@ -383,6 +403,8 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 	unix.SYS_STATX:   getSyscallDirfdPath,
 	unix.SYS_SYMLINK: getSyscallPathPath,
 	unix.SYS_SYMLINKAT: func(pid int, scParms *syscallParms) ([]string, error) {
+		paths := []string{}
+
 		target, err := getSyscallArgPath(pid, scParms.arg1)
 		if err != nil {
 			return nil, err
@@ -392,36 +414,37 @@ var fileSyscallFnMap = map[uint64]func(int, *syscallParms) ([]string, error){
 			if err != nil {
 				return nil, err
 			}
-			target = filepath.Join(cwd, target)
+			paths = append(paths, filepath.Clean(filepath.Join(cwd, target)))
+		} else {
+			paths = append(paths, filepath.Clean(target))
 		}
 
 		newdirfd := *(*int32)(unsafe.Pointer(&scParms.arg2))
-
 		linkpath, err := getSyscallArgPath(pid, scParms.arg3)
 		if err != nil {
 			return nil, err
 		}
-
 		if !filepath.IsAbs(linkpath) {
 			if newdirfd == unix.AT_FDCWD {
 				cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
 				if err != nil {
 					return nil, err
 				}
-				linkpath = filepath.Join(cwd, linkpath)
+				paths = append(paths, filepath.Clean(filepath.Join(cwd, linkpath)))
 			} else {
-				dirfdPath, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, newdirfd))
+				path, ok, err := getDirfdPath(pid, newdirfd, linkpath)
 				if err != nil {
 					return nil, err
 				}
-				linkpath = filepath.Join(dirfdPath, linkpath)
+				if ok {
+					paths = append(paths, path)
+				}
 			}
+		} else {
+			paths = append(paths, filepath.Clean(linkpath))
 		}
 
-		return []string{
-			filepath.Clean(target),
-			filepath.Clean(linkpath),
-		}, nil
+		return paths, nil
 	},
 	unix.SYS_UNLINK:    getSyscallPath,
 	unix.SYS_UNLINKAT:  getSyscallDirfdPath,
