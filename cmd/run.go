@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"os"
 	"syscall"
 	"time"
 
@@ -15,28 +15,30 @@ import (
 var RunCmd = &cobra.Command{
 	Use:   "run [FLAGS] -- CMD [ARGS]",
 	Short: "Run command.",
-	Long:  "TODO",
 	Args:  cobra.MinimumNArgs(1),
-	RunE: func(cobraCmd *cobra.Command, args []string) error {
+	Run: func(cobraCmd *cobra.Command, args []string) {
 		logger := log.MustLogger(cobraCmd.Context())
 
 		cache, err := cachePkg.NewCache[map[string]time.Time]()
 		if err != nil {
-			return err
+			logger.Error("failed to create cache", "err", err)
+			os.Exit(1)
 		}
 
 		name := args[0]
 		args = args[1:]
 		cmdPtraceFile, err := cmdPkg.NewCmdPtraceFile(name, args, nil, "")
 		if err != nil {
-			return fmt.Errorf("failed to create command: %w", err)
+			logger.Error("failed to create command", "err", err)
+			os.Exit(1)
 		}
 		key := cmdPtraceFile.Id()
 
 		logger.Info("Checking if cached")
 		value, err := cache.Get(key)
 		if err != nil {
-			return fmt.Errorf("failed to get from cache: %w", err)
+			logger.Error("failed to get from cache", "err", err)
+			os.Exit(1)
 		}
 
 		shouldRun := false
@@ -48,7 +50,8 @@ var RunCmd = &cobra.Command{
 				if err != nil {
 					if errno, ok := err.(syscall.Errno); ok {
 						if !(errno == syscall.ENOTDIR || errno == syscall.ENOENT) {
-							return fmt.Errorf("failed to stat file: %w", err)
+							logger.Error("failed to stat file", "err", err)
+							os.Exit(1)
 						}
 					}
 					if !tim.IsZero() {
@@ -80,14 +83,15 @@ var RunCmd = &cobra.Command{
 
 		if !shouldRun {
 			logger.Info("Success (cached)")
-			return nil
+			return
 		}
 		logger.Info("Running")
 
 		ctx := context.Background()
 		fileMap, err := cmdPtraceFile.Run(ctx)
 		if err != nil {
-			return fmt.Errorf("command failed: %w", err)
+			logger.Error("command failed", "err", err)
+			os.Exit(1)
 		}
 
 		logger.Info("Stat files for caching")
@@ -99,10 +103,12 @@ var RunCmd = &cobra.Command{
 			if err != nil {
 				if errno, ok := err.(syscall.Errno); ok {
 					if !(errno == syscall.ENOTDIR || errno == syscall.ENOENT) {
-						return fmt.Errorf("failed to stat: %w (errno %d)", err, errno)
+						logger.Error("failed to stat", "err", err)
+						os.Exit(1)
 					}
 				} else {
-					return fmt.Errorf("failed to stat: %w (%T)", err, err)
+					logger.Error("failed to stat", "err", err)
+					os.Exit(1)
 				}
 			} else {
 				tim = time.Unix(stat_t.Mtim.Sec, stat_t.Mtim.Nsec)
@@ -114,12 +120,13 @@ var RunCmd = &cobra.Command{
 			value[path] = tim
 		}
 		if err := cache.Put(key, value); err != nil {
-			return fmt.Errorf("faild to put to cache: %w", err)
+			logger.Error("faild to put to cache", "err", err)
+			os.Exit(1)
 		}
 
 		logger.Info("Success")
 
-		return nil
+		return
 	},
 }
 
