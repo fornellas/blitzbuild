@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -126,7 +127,7 @@ var RunCmd = &cobra.Command{
 		}
 		for _, mount := range mounts {
 			if _, ok := ignoreFsTypesMap[mount.FSType]; ok {
-				patterns = append(patterns, mount.MountPoint)
+				patterns = append(patterns, filepath.Join(mount.MountPoint, "**"))
 			}
 		}
 
