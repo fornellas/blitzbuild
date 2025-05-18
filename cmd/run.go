@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"syscall"
 	"time"
@@ -28,7 +27,7 @@ var defaultIgnoreFsTypes = []string{
 var ignorePatterns []string
 var defaultIgnorePatterns = []string{
 	"**/.cache/**",
-	"/home/fornellas/.cache/go-build/*",
+	"**/.git/**",
 }
 
 var RunCmd = &cobra.Command{
@@ -129,9 +128,6 @@ var RunCmd = &cobra.Command{
 			if _, ok := ignoreFsTypesMap[mount.FSType]; ok {
 				patterns = append(patterns, mount.MountPoint)
 			}
-		}
-		for _, pattern := range patterns {
-			fmt.Printf("pattern: %#v\n", pattern)
 		}
 
 		logger.Info("Stat files for caching")
