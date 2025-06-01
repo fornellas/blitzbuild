@@ -1,9 +1,6 @@
-- Run:
-    - ptrace children
-        - check https://pkg.go.dev/github.com/u-root/u-root/pkg/strace#Strace
-    - on failure, kill process / wait for it
-    - subreaper
-    - add c.path & c.dir to returned list of files
-- main
-    - exclude files on some filesystems (eg: proc, sys)
-    - after Run, stat all files and fetch thte newest time (mod / status change)
+INFO Stat files for caching
+ERROR failed to stat
+  err: permission denied
+  path: /etc/ssl/private/foo
+        when stat goes after, it may have a different EUID/EGID
+        this needs to be taken into consideration for caching

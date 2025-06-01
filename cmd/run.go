@@ -156,11 +156,11 @@ var RunCmd = &cobra.Command{
 			if err != nil {
 				if errno, ok := err.(syscall.Errno); ok {
 					if !(errno == syscall.ENOTDIR || errno == syscall.ENOENT) {
-						logger.Error("failed to stat", "err", err)
+						logger.Error("failed to stat", "err", err, "path", path)
 						os.Exit(1)
 					}
 				} else {
-					logger.Error("failed to stat", "err", err)
+					logger.Error("failed to stat", "err", err, "path", path)
 					os.Exit(1)
 				}
 			} else {
