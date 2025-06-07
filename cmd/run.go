@@ -53,7 +53,7 @@ var RunCmd = &cobra.Command{
 		}
 		key := cmdPtraceFile.Id()
 
-		logger.Info("Checking if cached")
+		logger.Debug("Checking if cached")
 		value, err := cache.Get(key)
 		if err != nil {
 			logger.Error("failed to get from cache", "err", err)
@@ -62,7 +62,7 @@ var RunCmd = &cobra.Command{
 
 		shouldRun := false
 		if value != nil {
-			logger.Info("We have in cache, checking if any changes")
+			logger.Debug("We have in cache, checking if any changes")
 			for path, tim := range value {
 				var stat_t syscall.Stat_t
 				err := syscall.Stat(path, &stat_t)
@@ -74,7 +74,7 @@ var RunCmd = &cobra.Command{
 						}
 					}
 					if !tim.IsZero() {
-						logger.Info("file exists on cache, but does not exist now", "path", path)
+						logger.Warn("file exists on cache, but does not exist now", "path", path)
 						shouldRun = true
 						break
 					}
@@ -82,21 +82,21 @@ var RunCmd = &cobra.Command{
 					mtim := time.Unix(stat_t.Mtim.Sec, stat_t.Mtim.Nsec)
 					ctim := time.Unix(stat_t.Ctim.Sec, stat_t.Ctim.Nsec)
 					if tim.IsZero() {
-						logger.Info("file didn't exist on cache, but existis now", "path", path)
+						logger.Warn("file didn't exist on cache, but existis now", "path", path)
 						shouldRun = true
 						break
 					} else if mtim.After(tim) || ctim.After(tim) {
-						logger.Info("file modified", "path", path)
+						logger.Warn("file modified", "path", path)
 						shouldRun = true
 						break
 					}
 				}
 			}
 			if !shouldRun {
-				logger.Info("no file changes", "count", len(value))
+				logger.Debug("no file changes", "count", len(value))
 			}
 		} else {
-			logger.Info("Not in cache, running")
+			logger.Debug("Not in cache, running")
 			shouldRun = true
 		}
 
@@ -104,7 +104,7 @@ var RunCmd = &cobra.Command{
 			logger.Info("Success (cached)")
 			return
 		}
-		logger.Info("Running")
+		logger.Debug("Running")
 
 		ctx := context.Background()
 		fileMap, err := cmdPtraceFile.Run(ctx)
@@ -115,7 +115,7 @@ var RunCmd = &cobra.Command{
 
 		patterns := ignorePatterns
 
-		logger.Info("Loading mounts")
+		logger.Debug("Loading mounts")
 		mounts, err := proc.LoadMounts()
 		if err != nil {
 			logger.Error("failed to load mounts", "err", err)
@@ -131,7 +131,7 @@ var RunCmd = &cobra.Command{
 			}
 		}
 
-		logger.Info("Stat files for caching")
+		logger.Debug("Stat files for caching")
 		value = map[string]time.Time{}
 		for path := range fileMap {
 			ignore := false
@@ -177,7 +177,7 @@ var RunCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		logger.Info("Success")
+		logger.Debug("Success")
 
 		return
 	},
