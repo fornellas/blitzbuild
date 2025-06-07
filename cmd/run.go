@@ -46,12 +46,13 @@ var RunCmd = &cobra.Command{
 
 		name := args[0]
 		args = args[1:]
-		cmdPtraceFile, err := cmdPkg.NewCmdPtraceFile(name, args, nil, "")
+		var cmd cmdPkg.Cmd
+		cmd, err = cmdPkg.NewCmdPtraceFile(name, args, nil, "")
 		if err != nil {
 			logger.Error("failed to create command", "err", err)
 			os.Exit(1)
 		}
-		key := cmdPtraceFile.Id()
+		key := cmd.Id()
 
 		logger.Debug("Checking if cached")
 		value, err := cache.Get(key)
@@ -107,7 +108,7 @@ var RunCmd = &cobra.Command{
 		logger.Debug("Running")
 
 		ctx := context.Background()
-		fileMap, err := cmdPtraceFile.Run(ctx)
+		fileMap, err := cmd.Run(ctx)
 		if err != nil {
 			logger.Error("command failed", "err", err)
 			os.Exit(1)
