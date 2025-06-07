@@ -36,6 +36,9 @@ func (e *ExitError) Error() string {
 	return fmt.Sprintf("ExitError: %s\n", res)
 }
 
+// Id uniquely identify a Cmd.
+type Id string
+
 // Cmd runs a command and tracks which files the command has interacted with.
 type Cmd interface {
 	// Run executes the command and traces files it interacted with. On success, it
@@ -43,5 +46,5 @@ type Cmd interface {
 	// related errors.
 	Run(ctx context.Context) (map[string]bool, error)
 	// Id uniquely identify this command.
-	Id() string
+	Id() Id
 }

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha512"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -38,7 +41,7 @@ var RunCmd = &cobra.Command{
 	Run: func(cobraCmd *cobra.Command, args []string) {
 		logger := log.MustLogger(cobraCmd.Context())
 
-		cache, err := cachePkg.NewCache[map[string]time.Time]()
+		cache, err := cachePkg.NewCmdCache()
 		if err != nil {
 			logger.Error("failed to create cache", "err", err)
 			os.Exit(1)
@@ -55,16 +58,16 @@ var RunCmd = &cobra.Command{
 		key := cmd.Id()
 
 		logger.Debug("Checking if cached")
-		value, err := cache.Get(key)
+		cmdCacheValue, err := cache.Get(key)
 		if err != nil {
 			logger.Error("failed to get from cache", "err", err)
 			os.Exit(1)
 		}
 
 		shouldRun := false
-		if value != nil {
+		if cmdCacheValue != nil {
 			logger.Debug("We have in cache, checking if any changes")
-			for path, tim := range value {
+			for path, fileInfo := range cmdCacheValue.FileInfoMap {
 				var stat_t syscall.Stat_t
 				err := syscall.Stat(path, &stat_t)
 				if err != nil {
@@ -74,7 +77,7 @@ var RunCmd = &cobra.Command{
 							os.Exit(1)
 						}
 					}
-					if !tim.IsZero() {
+					if !fileInfo.Time.IsZero() {
 						logger.Warn("file exists on cache, but does not exist now", "path", path)
 						shouldRun = true
 						break
@@ -82,19 +85,35 @@ var RunCmd = &cobra.Command{
 				} else {
 					mtim := time.Unix(stat_t.Mtim.Sec, stat_t.Mtim.Nsec)
 					ctim := time.Unix(stat_t.Ctim.Sec, stat_t.Ctim.Nsec)
-					if tim.IsZero() {
+					if fileInfo.Time.IsZero() {
 						logger.Warn("file didn't exist on cache, but existis now", "path", path)
 						shouldRun = true
 						break
-					} else if mtim.After(tim) || ctim.After(tim) {
-						logger.Warn("file modified", "path", path)
-						shouldRun = true
-						break
+					} else if mtim.After(fileInfo.Time) || ctim.After(fileInfo.Time) {
+						logger.Debug("file modification / status change time is newer than cache, checking file hash", "path", path)
+
+						hash := sha512.New()
+						file, err := os.Open(path)
+						if err != nil {
+							// FIXME if not exist, ignore
+							logger.Error("failed open file", "err", err, "path", path)
+							os.Exit(1)
+						}
+						if _, err := io.Copy(hash, file); err != nil {
+							logger.Error("failed to hash file", "err", err, "path", path)
+							os.Exit(1)
+						}
+
+						if !bytes.Equal(fileInfo.Sha512Sum, hash.Sum(nil)) {
+							logger.Warn("file changed", "path", path)
+							shouldRun = true
+							break
+						}
 					}
 				}
 			}
 			if !shouldRun {
-				logger.Debug("no file changes", "count", len(value))
+				logger.Debug("no file changes", "count", len(cmdCacheValue.FileInfoMap))
 			}
 		} else {
 			logger.Debug("Not in cache, running")
@@ -133,7 +152,10 @@ var RunCmd = &cobra.Command{
 		}
 
 		logger.Debug("Stat files for caching")
-		value = map[string]time.Time{}
+		cmdCacheValue = &cachePkg.CmdCacheValue{
+			Id:          cmd.Id(),
+			FileInfoMap: cachePkg.CmdFileInfoMap{},
+		}
 		for path := range fileMap {
 			ignore := false
 			for _, pattern := range patterns {
@@ -151,7 +173,7 @@ var RunCmd = &cobra.Command{
 				continue
 			}
 
-			var tim time.Time
+			var tme time.Time
 			var stat_t syscall.Stat_t
 			err := syscall.Stat(path, &stat_t)
 			if err != nil {
@@ -165,15 +187,30 @@ var RunCmd = &cobra.Command{
 					os.Exit(1)
 				}
 			} else {
-				tim = time.Unix(stat_t.Mtim.Sec, stat_t.Mtim.Nsec)
+				tme = time.Unix(stat_t.Mtim.Sec, stat_t.Mtim.Nsec)
 				ctim := time.Unix(stat_t.Ctim.Sec, stat_t.Ctim.Nsec)
-				if ctim.After(tim) {
-					tim = ctim
+				if ctim.After(tme) {
+					tme = ctim
 				}
 			}
-			value[path] = tim
+
+			hash := sha512.New()
+			file, err := os.Open(path)
+			if err != nil {
+				logger.Error("failed open file", "err", err, "path", path)
+				os.Exit(1)
+			}
+			if _, err := io.Copy(hash, file); err != nil {
+				logger.Error("failed to hash file", "err", err, "path", path)
+				os.Exit(1)
+			}
+
+			cmdCacheValue.FileInfoMap[path] = cachePkg.CmdFileInfo{
+				Time:      tme,
+				Sha512Sum: hash.Sum(nil),
+			}
 		}
-		if err := cache.Put(key, value); err != nil {
+		if err := cache.Put(key, cmdCacheValue); err != nil {
 			logger.Error("faild to put to cache", "err", err)
 			os.Exit(1)
 		}

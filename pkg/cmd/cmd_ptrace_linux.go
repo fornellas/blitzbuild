@@ -915,8 +915,8 @@ func (c *CmdPtraceFile) Run(ctx context.Context) (map[string]bool, error) {
 }
 
 // Id uniquely identify this command.
-func (c *CmdPtraceFile) Id() string {
-	return fmt.Sprintf(
+func (c *CmdPtraceFile) Id() Id {
+	return Id(fmt.Sprintf(
 		"%s%v%v%s%d%d",
 		c.path,
 		c.args,
@@ -924,5 +924,5 @@ func (c *CmdPtraceFile) Id() string {
 		c.dir,
 		unix.Getuid(),
 		unix.Getgid(),
-	)
+	))
 }

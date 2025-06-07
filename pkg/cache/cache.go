@@ -11,12 +11,12 @@ import (
 )
 
 // Cache is a cache implementation that persists data to the filesystem.
-type Cache[T any] struct {
+type Cache[K ~string, V any] struct {
 	cacheDir string
 }
 
 // NewPersistentCache creates a new persistent cache in the user's cache directory.
-func NewCache[T any]() (*Cache[T], error) {
+func NewCache[K ~string, V any]() (*Cache[K, V], error) {
 	userCacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user cache directory: %w", err)
@@ -27,20 +27,20 @@ func NewCache[T any]() (*Cache[T], error) {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	return &Cache[T]{
+	return &Cache[K, V]{
 		cacheDir: cacheDir,
 	}, nil
 }
 
-func (c *Cache[T]) getFilePath(key string) string {
-	h := sha512.New()
-	h.Write([]byte(key))
-	hashedKey := hex.EncodeToString(h.Sum(nil))
+func (c *Cache[K, V]) getFilePath(key K) string {
+	hash := sha512.New()
+	hash.Write([]byte(key))
+	hashedKey := hex.EncodeToString(hash.Sum(nil))
 	return filepath.Join(c.cacheDir, hashedKey)
 }
 
 // Put saves a value to the cache.
-func (c *Cache[T]) Put(key string, value T) error {
+func (c *Cache[K, V]) Put(key K, value V) error {
 	filePath := c.getFilePath(key)
 	tempFilePath := filePath + "-temp"
 
@@ -84,7 +84,7 @@ func (c *Cache[T]) Put(key string, value T) error {
 }
 
 // Get retrieves a value from the cache.
-func (c *Cache[T]) Get(key string) (value T, err error) {
+func (c *Cache[K, V]) Get(key K) (value V, err error) {
 	filePath := c.getFilePath(key)
 
 	var file *os.File
