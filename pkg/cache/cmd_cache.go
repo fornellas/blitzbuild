@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha512"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,11 +18,13 @@ import (
 var statOkErrno = map[syscall.Errno]bool{
 	syscall.ENOTDIR: true,
 	syscall.ENOENT:  true,
+	syscall.EACCES:  true,
 }
 
 type CmdFileInfo struct {
-	Errno     syscall.Errno
+	StatErrno syscall.Errno
 	Stat_t    *syscall.Stat_t
+	OpenErrno syscall.Errno
 	Sha512Sum []byte
 }
 
@@ -65,12 +68,12 @@ func (c *CmdCache) IsCacheHit(ctx context.Context, cmd cmdPkg.Cmd) (bool, string
 			err := syscall.Stat(path, &stat_t)
 			if err != nil {
 				if errno, ok := err.(syscall.Errno); ok {
-					if fileInfo.Errno != syscall.Errno(0) {
-						if errno == fileInfo.Errno {
+					if fileInfo.StatErrno != syscall.Errno(0) {
+						if errno == fileInfo.StatErrno {
 							logger.Debug("same stat errno", "path", path, "errno", errno.Error())
 							continue
 						} else {
-							return false, fmt.Sprintf("different stat errno: %#v: cached %#v, now %#v", path, fileInfo.Errno.Error(), errno.Error()), nil
+							return false, fmt.Sprintf("different stat errno: %#v: cached %#v, now %#v", path, fileInfo.StatErrno.Error(), errno.Error()), nil
 						}
 					} else {
 						return false, fmt.Sprintf("file existed, now stat error: %#v: %#v", path, errno.Error()), nil
@@ -79,8 +82,8 @@ func (c *CmdCache) IsCacheHit(ctx context.Context, cmd cmdPkg.Cmd) (bool, string
 					return false, "", fmt.Errorf("failed to stat: %#v: %w", path, err)
 				}
 			} else {
-				if fileInfo.Errno != syscall.Errno(0) {
-					return false, fmt.Sprintf("different stat errno: %#v: cached %#v, now no error", path, fileInfo.Errno.Error()), nil
+				if fileInfo.StatErrno != syscall.Errno(0) {
+					return false, fmt.Sprintf("different stat errno: %#v: cached %#v, now no error", path, fileInfo.StatErrno.Error()), nil
 				}
 				if stat_t.Dev != fileInfo.Stat_t.Dev {
 					return false, fmt.Sprintf("file dev changed: %#v", path), nil
@@ -107,17 +110,39 @@ func (c *CmdCache) IsCacheHit(ctx context.Context, cmd cmdPkg.Cmd) (bool, string
 					if (stat_t.Mode & syscall.S_IFMT) == syscall.S_IFREG {
 						logger.Debug("regular file mtim / ctim change, hashing", "path", path)
 						hash := sha512.New()
-						file, err := os.Open(path)
+						fd, err := syscall.Open(path, os.O_RDONLY, 0)
 						if err != nil {
-							return false, "", fmt.Errorf("failed to open file: %#v: %w", path, err)
-						}
-						if _, err := io.Copy(hash, file); err != nil {
-							return false, "", fmt.Errorf("failed to hash file: %#v: %w", path, err)
-						}
-						if bytes.Equal(fileInfo.Sha512Sum, hash.Sum(nil)) {
-							logger.Debug("no hash change", "path", path)
+							if errno, ok := err.(syscall.Errno); ok {
+								if fileInfo.OpenErrno != syscall.Errno(0) {
+									if errno == fileInfo.OpenErrno {
+										logger.Debug("same open errno", "path", path, "errno", errno.Error())
+										continue
+									} else {
+										return false, fmt.Sprintf("different open errno: %#v: cached %#v, now %#v", path, fileInfo.OpenErrno.Error(), errno.Error()), nil
+									}
+								} else {
+									return false, fmt.Sprintf("file was able to be opened before, now open error: %#v: %#v", path, errno.Error()), nil
+								}
+							} else {
+								return false, "", fmt.Errorf("failed to open: %#v: %w", path, err)
+							}
 						} else {
-							return false, fmt.Sprintf("hash change: %#v", path), nil
+							file := os.NewFile(uintptr(fd), path)
+							if fileInfo.OpenErrno != syscall.Errno(0) {
+								if err := file.Close(); err != nil {
+									return false, "", err
+								}
+								return false, fmt.Sprintf("file failed to open before, now succeeds: %#v: cached %#v", path, fileInfo.OpenErrno.Error()), nil
+							} else {
+								if _, err := io.Copy(hash, file); err != nil {
+									return false, "", fmt.Errorf("failed to hash file: %#v: %w", path, err)
+								}
+								if bytes.Equal(fileInfo.Sha512Sum, hash.Sum(nil)) {
+									logger.Debug("no hash change", "path", path)
+								} else {
+									return false, fmt.Sprintf("hash change: %#v", path), nil
+								}
+							}
 						}
 					} else {
 						logger.Debug("ignoring non-regular file mtim / ctim change", "path", path)
@@ -167,7 +192,7 @@ func (c *CmdCache) PutCmd(
 		if err != nil {
 			if errno, ok := err.(syscall.Errno); ok {
 				if _, ok := statOkErrno[errno]; ok {
-					cmdFileInfo.Errno = errno
+					cmdFileInfo.StatErrno = errno
 				} else {
 					return fmt.Errorf("failed to stat: %#v: %w", path, err)
 				}
@@ -179,12 +204,28 @@ func (c *CmdCache) PutCmd(
 
 			if (stat_t.Mode & syscall.S_IFMT) == syscall.S_IFREG {
 				hash := sha512.New()
-				file, err := os.Open(path)
+				fd, err := syscall.Open(path, os.O_RDONLY, 0)
 				if err != nil {
-					return fmt.Errorf("failed to open file: %#v: %w", path, err)
-				}
-				if _, err := io.Copy(hash, file); err != nil {
-					return fmt.Errorf("failed to hash file: %#v: %w", path, err)
+					if errno, ok := err.(syscall.Errno); ok {
+						if _, ok := statOkErrno[errno]; ok {
+							cmdFileInfo.OpenErrno = errno
+						} else {
+							return fmt.Errorf("failed to open: %#v: %w", path, err)
+						}
+					} else {
+						return fmt.Errorf("failed to open: %#v: %w", path, err)
+					}
+				} else {
+					file := os.NewFile(uintptr(fd), path)
+					if _, err := io.Copy(hash, file); err != nil {
+						return errors.Join(
+							fmt.Errorf("failed to hash file: %#v: %w", path, err),
+							file.Close(),
+						)
+					}
+					if err := file.Close(); err != nil {
+						return err
+					}
 				}
 				cmdFileInfo.Sha512Sum = hash.Sum(nil)
 			}
