@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"al.essio.dev/pkg/shellescape"
 	"golang.org/x/sys/unix"
 )
 
@@ -925,4 +927,16 @@ func (c *CmdPtraceFile) Id() Id {
 		unix.Getuid(),
 		unix.Getgid(),
 	))
+}
+
+func (c *CmdPtraceFile) String() string {
+	var buff bytes.Buffer
+
+	fmt.Fprintf(&buff, "%s", shellescape.Quote(c.path))
+
+	for _, arg := range c.args {
+		fmt.Fprintf(&buff, " %s", shellescape.Quote(arg))
+	}
+
+	return buff.String()
 }

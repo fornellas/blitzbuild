@@ -34,18 +34,20 @@ var RunCmd = &cobra.Command{
 		ctx := cobraCmd.Context()
 		logger := log.MustLogger(ctx)
 
-		cache, err := cachePkg.NewCmdCache()
-		if err != nil {
-			logger.Error("failed to create cache", "err", err)
-			os.Exit(1)
-		}
-
 		name := args[0]
 		args = args[1:]
 		var cmd cmdPkg.Cmd
-		cmd, err = cmdPkg.NewCmdPtraceFile(name, args, nil, "")
+		cmd, err := cmdPkg.NewCmdPtraceFile(name, args, nil, "")
 		if err != nil {
 			logger.Error("failed to create command", "err", err)
+			os.Exit(1)
+		}
+
+		ctx, logger = log.MustWithAttrs(ctx, "cmd", cmd)
+
+		cache, err := cachePkg.NewCmdCache()
+		if err != nil {
+			logger.Error("failed to create cache", "err", err)
 			os.Exit(1)
 		}
 

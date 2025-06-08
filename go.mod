@@ -5,6 +5,7 @@ go 1.24.2
 require golang.org/x/sys v0.33.0
 
 require (
+	al.essio.dev/pkg/shellescape v1.6.0 // indirect
 	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.8.1 // indirect
 	github.com/fornellas/resonance v0.4.0-alpha // indirect

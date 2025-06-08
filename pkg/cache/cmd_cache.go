@@ -65,11 +65,15 @@ func (c *CmdCache) IsCacheHit(ctx context.Context, cmd cmdPkg.Cmd) (bool, string
 			err := syscall.Stat(path, &stat_t)
 			if err != nil {
 				if errno, ok := err.(syscall.Errno); ok {
-					if errno == fileInfo.Errno {
-						logger.Debug("same stat errno", "path", path, "errno", errno.Error())
-						continue
+					if fileInfo.Errno != syscall.Errno(0) {
+						if errno == fileInfo.Errno {
+							logger.Debug("same stat errno", "path", path, "errno", errno.Error())
+							continue
+						} else {
+							return false, fmt.Sprintf("different stat errno: %#v: cached %#v, now %#v", path, fileInfo.Errno.Error(), errno.Error()), nil
+						}
 					} else {
-						return false, fmt.Sprintf("different stat errno: %#v: cached %#v, now %#v", path, fileInfo.Errno.Error(), errno.Error()), nil
+						return false, fmt.Sprintf("file existed, now stat error: %#v: %#v", path, errno.Error()), nil
 					}
 				} else {
 					return false, "", fmt.Errorf("failed to stat: %#v: %w", path, err)

@@ -47,4 +47,5 @@ type Cmd interface {
 	Run(ctx context.Context) (map[string]bool, error)
 	// Id uniquely identify this command.
 	Id() Id
+	String() string
 }
