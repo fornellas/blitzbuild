@@ -58,11 +58,11 @@ var RunCmd = &cobra.Command{
 		}
 
 		if isCacheHit {
-			logger.Info("Cache hit, not running", "reason", reason)
+			logger.Info("🎯 Cache hit, not running", "reason", reason)
 			return
 		}
 
-		logger.Info("Cache miss, running", "reason", reason)
+		logger.Info("🤦 Cache miss, running", "reason", reason)
 
 		fileMap, err := cmd.Run(ctx)
 		if err != nil {
